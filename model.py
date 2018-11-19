@@ -234,7 +234,6 @@ class FloWaveNet:
                     out, c, logdet_new = block(out, c)
                     logdet = logdet + logdet_new
 
-                print(out, c)
                 log_p = tf.reduce_mean(0.5 * (- log(2.0 * pi) - tf.square(out)))
                 return log_p, logdet
 

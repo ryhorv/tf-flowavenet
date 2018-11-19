@@ -57,10 +57,14 @@ def get_train_model(dataset, hparams, global_step):
                     with tf.name_scope('gradient_clipping'):
                         grad_vars = []
                         for grad, var in zip(grads, vars):
-                            clipped_grad = tf.clip_by_norm(grad, 1)
-                            grad_vars.append((clipped_grad, var))
+                            if grad is not None:
+                                clipped_grad = tf.clip_by_norm(grad, 1)
+                                grad_vars.append((clipped_grad, var))
+                            else:
+                                print(var)
+                                grad_vars.append((grad, var))
 
-                    tower_gradvars.append(grads)
+                    tower_gradvars.append(grad_vars)
 
                     if i == 0:
                         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, name_scope)
@@ -88,12 +92,10 @@ def train(log_dir, args, hparams, input_path):
     os.makedirs(test_logdir, exist_ok=True)
 
     checkpoint_path = os.path.join(save_dir, 'flowavenet_model.ckpt')
-    # input_path = os.path.join(args.base_dir, input_path)
+    input_path = os.path.join(args.base_dir, input_path)
 
     print('Checkpoint_path: {}'.format(checkpoint_path))
     print('Loading training data from: {}'.format(input_path))
-    print('Using model: {}'.format(args.model))
-
 
     #Start by setting a seed for repeatability
     # tf.set_random_seed(hparams.tacotron_random_seed)
@@ -119,7 +121,7 @@ def train(log_dir, args, hparams, input_path):
     step = 0
     saver = tf.train.Saver()
 
-    print('FloWaveNet training set to a maximum of {} steps'.format(args.tacotron_train_steps))
+    print('FloWaveNet training set to a maximum of {} steps'.format(args.train_steps))
     
     #Memory allocation on the memory
     config = tf.ConfigProto()
@@ -207,5 +209,8 @@ def main():
 
     logdir = os.path.join(args.base_dir, 'logs')
     os.makedirs(logdir, exist_ok=True)
-
+#     print('выаыв')
     train(logdir, args, hparams, args.input)
+    
+if __name__ == "__main__":
+    main()

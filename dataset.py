@@ -22,11 +22,6 @@ class Dataset:
         with open(metadata_filename, 'r') as f:
             self._metadata = [line.strip().split('|') for line in f]
 
-        #Train test split 
-        if hparams.wavenet_test_size is None:
-            assert hparams.wavenet_test_batches is not None
-
-
         indices = np.arange(len(self._metadata))
         train_indices, test_indices = train_test_split(indices,
             test_size=hparams.test_size, random_state=hparams.split_random_state)
@@ -45,7 +40,7 @@ class Dataset:
             dataset = dataset.apply(tf.contrib.data.shuffle_and_repeat(buffer_size=_buffer_size))
             dataset = dataset.batch(hparams.batch_size)
             dataset = dataset.map(self._load_batch, n_cpu)
-            dataset = dataset.prefetch(hparams.num_gpus) if hparams.use_multiple_gpus else dataset.prefetch(1)
+            dataset = dataset.prefetch(hparams.num_gpus)
 
             self._train_iterator = dataset.make_initializable_iterator()
             self.inputs = []

@@ -4,7 +4,7 @@ import numpy as np
 
 # Default hyperparameters
 hparams = tf.contrib.training.HParams(
-    num_gpus = 2, #Determines the number of gpus in use
+    num_gpus = 1, #Determines the number of gpus in use
     ps_device_type = 'CPU', # 'CPU'/'GPU'  Where gradients will sync
 
     #Audio
