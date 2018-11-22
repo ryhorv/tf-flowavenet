@@ -97,7 +97,7 @@ def get_train_model(dataset, hparams, global_step):
         with tf.control_dependencies(update_ops):
             train_op = optimizer.apply_gradients(grad_vars, global_step=global_step)
 
-    return train_op, train_model, train_losses, lr, train_predictd_wavs, train_target_wavs, tower_gradvars[0]
+    return train_op, train_model, train_losses, lr, train_predictd_wavs, train_target_wavs
 
 def get_test_model(dataset, hparams):
     with tf.variable_scope('vocoder', reuse=tf.AUTO_REUSE):
@@ -118,7 +118,7 @@ def get_test_model(dataset, hparams):
         losses = [loss, log_p, logdet]
         return losses, None, None
     
-def get_summary_op(train_losses, test_losses, learning_rate, is_training, grad_vars):
+def get_summary_op(train_losses, test_losses, learning_rate, is_training):
     losses = tf.cond(is_training, true_fn=lambda: train_losses, false_fn=lambda: test_losses)
     train_summaries = []
     test_summaries = []
@@ -136,19 +136,7 @@ def get_summary_op(train_losses, test_losses, learning_rate, is_training, grad_v
     test_summaries.append(logdet)
     
     
-    train_summaries.append(tf.summary.scalar('learning_rate', learning_rate))
-    
-    with tf.name_scope('max_grad_val'):
-        max_abs_grads = []
-        for grad, var in grad_vars:
-            if grad is not None:
-                train_summaries.append(tf.summary.histogram(grad.name, grad))
-                max_abs_grads.append(tf.reduce_max(tf.abs(grad)))
-
-        max_abs_value = tf.reduce_max(max_abs_grads)
-            
-    train_summaries.append(tf.summary.scalar('max_abs_grad', max_abs_value))
-    
+    train_summaries.append(tf.summary.scalar('learning_rate', learning_rate))  
     
     train_op = tf.summary.merge(train_summaries)
     test_op = tf.summary.merge(test_summaries)
@@ -179,7 +167,7 @@ def train(log_dir, args, hparams, input_path):
 
     #Set up model
     global_step = tf.Variable(0, name='global_step', trainable=False)
-    train_op, train_model, train_losses, lr, train_predictd_wavs, train_target_wavs, gradvars = get_train_model(dataset, hparams, global_step)
+    train_op, train_model, train_losses, lr, train_predictd_wavs, train_target_wavs = get_train_model(dataset, hparams, global_step)
     test_losses, test_predicted_wavs, test_target_wavs = get_test_model(dataset, hparams)
     
 #     _, init_ops = train_model.initialize(dataset.inputs[0], dataset.local_conditions[0])
@@ -187,7 +175,7 @@ def train(log_dir, args, hparams, input_path):
     
     is_training = tf.placeholder(tf.bool, name='is_training')
     
-    train_summary_op, test_summary_op = get_summary_op(train_losses, test_losses, lr, is_training, gradvars)
+    train_summary_op, test_summary_op = get_summary_op(train_losses, test_losses, lr, is_training)
     
     # eval_summary = get_eval_summary_op(is_training, 
     #                     outputs['mel_outputs'], outputs['mel_targets'], outputs['alignments'], outputs['targets_lengths'], 
