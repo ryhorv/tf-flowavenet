@@ -4,8 +4,8 @@ import numpy as np
 
 # Default hyperparameters
 hparams = tf.contrib.training.HParams(
-    num_gpus = 1, #Determines the number of gpus in use
-    ps_device_type = 'CPU', # 'CPU'/'GPU'  Where gradients will sync
+    num_gpus = 3, #Determines the number of gpus in use
+    ps_device_type = 'GPU', # 'CPU'/'GPU'  Where gradients will sync
 
     #Audio
     num_mels = 80, #Number of mel-spectrogram channels and local conditioning dimensionality
@@ -41,7 +41,7 @@ hparams = tf.contrib.training.HParams(
 
     split_random_state = 123,
     test_size = 30,
-    batch_size = 6,
+    batch_size = 3,
 
 
     causal = False,
@@ -49,7 +49,8 @@ hparams = tf.contrib.training.HParams(
     n_flow = 6,
     n_layer = 2,
     affine = True,
-    causality = False
+    causality = False,
+    tf_random_seed = 75
     )
 
 def hparams_debug_string():

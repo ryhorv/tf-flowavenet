@@ -1,6 +1,7 @@
 import tensorflow as tf
 from modules import WaveNet
 from math import log, pi
+from convolutional import Conv2DTranspose
 
 logabs = lambda x: tf.log(tf.abs(x))
 
@@ -8,32 +9,31 @@ class ActNorm:
     def __init__(self, in_channel, logdet=True, scope='ActNorm'):
         with tf.variable_scope(scope):
             self._scope = scope
-            self._loc = tf.get_variable('loc', shape=[1, 1, in_channel])
-            self._scale = tf.get_variable('scale', shape=[1, 1, in_channel])
+            self._loc = tf.get_variable('loc', shape=[1, 1, in_channel], initializer=tf.initializers.zeros())
+            self._scale = tf.get_variable('scale', shape=[1, 1, in_channel], initializer=tf.initializers.ones())
             # self._is_initialized = tf.get_variable('is_initialized', shape=None, name=)
-            self._is_initialized = tf.Variable(False, trainable=False, name='is_initialized')
+#             self._is_initialized = tf.Variable(False, trainable=False, name='is_initialized')
 
             self._logdet = logdet
 
-    def _initialize(self, x):
+    def initialize(self, x):
         with tf.variable_scope(self._scope):
             with tf.name_scope('initialize'):
+                print(x, self._loc)
                 mean, std = tf.nn.moments(x, axes=[0, 1], keep_dims=True)
                 mean = tf.stop_gradient(mean)
                 std = tf.stop_gradient(std)
+                
+                init_op = []
+                init_op.append(self._loc.assign(-mean))
+                init_op.append(self._scale.assign(1 / (std + 1e-6)))
+#                 self._is_initialized.assign(True)
+                out, logdet = self.forward(x)
+                return [out, logdet], init_op
 
-                self._loc.assign(-mean)
-                self._scale.assign(1 / (std + 1e-6))
-                self._is_initialized.assign(True)
-
-                return tf.no_op()
 
     def forward(self, x):
         with tf.variable_scope(self._scope):
-            with tf.name_scope('forward'):
-                _ = tf.cond(self._is_initialized, true_fn=lambda: tf.no_op(), false_fn=lambda: self._initialize(x))
-
-
                 log_abs = logabs(self._scale)
                 logdet = tf.reduce_mean(log_abs)
 
@@ -45,7 +45,6 @@ class ActNorm:
 
     def reverse(self, output):
         with tf.variable_scope(self._scope):
-            with tf.name_scope('reverse'):
                 return output / self._scale - self._loc
 
     def __call__(self, x):
@@ -66,7 +65,6 @@ class AffineCoupling:
 
     def forward(self, x, c=None):
         with tf.variable_scope(self._scope):
-            with tf.name_scope('forward'):
                 in_a, in_b = tf.split(x, axis=2, num_or_size_splits=2)
                 # in_a.set_shape([None, None, self._in_channel//2])
                 # in_b.set_shape([None, None, self._in_channel - (self._in_channel//2)])
@@ -77,7 +75,7 @@ class AffineCoupling:
 
                 if self._affine:
                     log_s, t = tf.split(self._net(in_a, c_a), axis=2, num_or_size_splits=2)
-
+                    
                     out_b = (in_b - t) * tf.exp(-log_s)
                     logdet = tf.reduce_mean(-log_s) / 2
                 else:
@@ -89,7 +87,6 @@ class AffineCoupling:
 
     def reverse(self, output, c=None):
         with tf.variable_scope(self._scope):
-            with tf.name_scope('reverse'):
                 out_a, out_b = tf.split(output, axis=2, num_or_size_splits=2)
                 c_a, c_b = tf.split(c, axis=2, num_or_size_splits=2)
 
@@ -120,10 +117,21 @@ class Flow:
             self._actnorm = ActNorm(in_channel)
             self._coupling = AffineCoupling(in_channel, cin_channel, filter_size=filter_size,
                                        num_layer=num_layer, affine=affine, causal=causal)
+            
+    def initialize(self, x, c):
+        with tf.variable_scope(self._scope):
+            with tf.name_scope('init'):
+                [out, logdet], init_ops = self._actnorm.initialize(x)
+                out, det = self._coupling(out, c)
+                out, c = change_order(out, c)
+
+                if det is not None:
+                    logdet = logdet + det
+            
+                return [out, c, logdet], init_ops
 
     def forward(self, x, c=None):
         with tf.variable_scope(self._scope):
-            with tf.name_scope('forward'):
                 out, logdet = self._actnorm(x)
                 out, det = self._coupling(out, c)
                 out, c = change_order(out, c)
@@ -135,7 +143,6 @@ class Flow:
 
     def reverse(self, output, c=None):
         with tf.variable_scope(self._scope):
-            with tf.name_scope('reverse'):
                 output, c = change_order(output, c)
                 x = self._coupling.reverse(output, c)
                 x = self._actnorm.reverse(x)
@@ -155,10 +162,37 @@ class Block:
             for i in range(n_flow):
                 self._flows.append(Flow(squeeze_dim, squeeze_dim_c, filter_size=256, num_layer=n_layer, affine=affine,
                                     causal=causal, scope='Flow_%d' % i))
+                
+    def initialize(self, x, c):
+        with tf.variable_scope(self._scope):
+            with tf.name_scope('init'):
+                shape = tf.shape(x)
+                
+                with tf.name_scope('squeeze_x'):
+                    squeezed_x = tf.reshape(x, [shape[0], shape[1] // 2, 2, x.shape[2]])
+                    squeezed_x = tf.transpose(squeezed_x, [0, 1, 3, 2])
+                    out = tf.reshape(squeezed_x, [shape[0], shape[1] // 2, 2 * x.shape[2]])
+                    
+                with tf.name_scope('squeeze_c'):
+                    squeezed_c = tf.reshape(c, [shape[0], shape[1] // 2, 2, c.shape[2]])
+                    squeezed_c = tf.transpose(squeezed_c, [0, 1, 3, 2])
+                    c = tf.reshape(squeezed_c, [shape[0], shape[1] // 2, 2 * c.shape[2]])
+                
+                init_ops = []
+                logdet = []
+                for flow in self._flows:   
+                    [out, c, det], new_init_ops = flow.initialize(out, c)
+                    init_ops += new_init_ops
+                    logdet.append(det)
+                    
+                logdet = tf.add_n(logdet)
+                
+                return [out, c, logdet], init_ops
+                
+                
 
     def forward(self, x, c):
         with tf.variable_scope(self._scope):
-            with tf.name_scope('forward'):
                 shape = tf.shape(x)
                 with tf.name_scope('squeeze_x'):
                     squeezed_x = tf.reshape(x, [shape[0], shape[1] // 2, 2, x.shape[2]])
@@ -169,17 +203,18 @@ class Block:
                     squeezed_c = tf.reshape(c, [shape[0], shape[1] // 2, 2, c.shape[2]])
                     squeezed_c = tf.transpose(squeezed_c, [0, 1, 3, 2])
                     c = tf.reshape(squeezed_c, [shape[0], shape[1] // 2, 2 * c.shape[2]])
-                logdet = 0
-
+                
+                logdet = []
                 for flow in self._flows:
                     out, c, det = flow(out, c)
-                    logdet = logdet + det
-
+                    logdet.append(det)
+                    
+                logdet = tf.add_n(logdet)
+                
                 return out, c, logdet
 
     def reverse(self, output, c):
         with tf.variable_scope(self._scope):
-            with tf.name_scope('reverse'):
                 x = output
 
                 for flow in self._flows[::-1]:
@@ -216,25 +251,46 @@ class FloWaveNet:
 
             self._upsample_conv = []
             for s in [16, 16]:
-                convt = tf.layers.Conv2DTranspose(filters=1, 
-                                                  kernel_size=(2 * s, 3), 
-                                                  padding='same', 
-                                                  strides=(s, 1), 
-                                                  activation=lambda x: tf.nn.leaky_relu(x, 0.4))
-                self._upsample_conv.append(convt)                                  
+                convt = Conv2DTranspose(filters=1, 
+                                        kernel_size=(2 * s, 3), 
+                                        padding='same', 
+                                        strides=(s, 1), 
+                                        activation=lambda x: tf.nn.leaky_relu(x, 0.4),
+                                        kernel_initializer=tf.initializers.he_uniform(),
+                                        bias_initializer=tf.initializers.zeros())
+                self._upsample_conv.append(convt) 
+                
+                
+    def initialize(self, x, c):
+        with tf.variable_scope(self._scope):
+            with tf.name_scope('init'):
+                logdet = []
+                out = x
+                c = self.upsample(c)
+                
+                init_ops = []
+                for block in self._blocks:
+                    [out, c, logdet_new], new_init_ops  = block.initialize(out, c)
+                    init_ops += new_init_ops
+                    logdet.append(logdet_new)
+                    
+                logdet = tf.add_n(logdet)
+                log_p = tf.reduce_mean(0.5 * (- log(2.0 * pi) - tf.pow(out, 2)))
+                return [log_p, logdet], init_ops
 
 
     def forward(self, x, c):
         with tf.variable_scope(self._scope):
             with tf.name_scope('forward'):
-                logdet = 0
+                logdet = []
                 out = x
                 c = self.upsample(c)
                 for block in self._blocks:
                     out, c, logdet_new = block(out, c)
-                    logdet = logdet + logdet_new
+                    logdet.append(logdet_new)
 
-                log_p = tf.reduce_mean(0.5 * (- log(2.0 * pi) - tf.square(out)))
+                logdet = tf.add_n(logdet)
+                log_p = tf.reduce_mean(0.5 * (- log(2.0 * pi) - tf.pow(out, 2)))
                 return log_p, logdet
 
     def reverse(self, z, c):

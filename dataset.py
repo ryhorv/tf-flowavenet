@@ -26,10 +26,9 @@ class Dataset:
         train_indices, test_indices = train_test_split(indices,
             test_size=hparams.test_size, random_state=hparams.split_random_state)
 
-
         self._train_meta = list(np.array(self._metadata)[train_indices])
         self._test_meta = list(np.array(self._metadata)[test_indices])
-            
+        
         n_cpu = multiprocessing.cpu_count()
 
         with tf.device('/cpu:0'):

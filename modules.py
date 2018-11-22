@@ -1,5 +1,5 @@
 import tensorflow as tf
-
+from convolutional import Conv1D
 
 
 class Conv:
@@ -13,14 +13,17 @@ class Conv:
             else:
                 self._padding = dilation * (kernel_size - 1) // 2
 
-            self._conv = tf.layers.Conv1D(filters=out_channels, 
+            self._conv = Conv1D(filters=out_channels, 
                                         kernel_size=kernel_size,
                                         dilation_rate=dilation,
-                                        padding='valid')
+                                        padding='valid',
+                                        kernel_initializer=tf.initializers.he_uniform(),
+                                        bias_initializer=tf.initializers.zeros())
+            
+            
 
     def forward(self, tensor):
         with tf.variable_scope(self._scope):
-            with tf.name_scope('forward'):
                 padded_tensor = tf.pad(tensor, ((0, 0), (self._padding, self._padding), (0, 0)))
                 out = self._conv(padded_tensor)
 
@@ -37,18 +40,17 @@ class ZeroConv1d:
     def __init__(self, in_channel, out_channel, scope='ZeroConv1d'):
         with tf.variable_scope(scope):
             self._scope = scope
-            self._conv = tf.layers.Conv1D(filters=out_channel, 
+            self._conv = Conv1D(filters=out_channel, 
                                           kernel_size=1, 
                                           padding='valid', 
                                           kernel_initializer=tf.initializers.zeros(), 
                                           bias_initializer=tf.initializers.zeros())
 
-            self._scale = tf.get_variable('scale', shape=[1, 1, out_channel])
+            self._scale = tf.get_variable('scale', shape=[1, 1, out_channel], initializer=tf.initializers.zeros())
 
     
     def forward(self, x):
         with tf.variable_scope(self._scope):
-            with tf.name_scope('forward'):
                 out = self._conv(x)
                 out = out * tf.exp(self._scale * 3)
                 return out
@@ -70,23 +72,34 @@ class ResBlock:
 
             self._filter_conv = Conv(in_channels, out_channels, kernel_size, dilation, causal, scope='Conv_filter')
             self._gate_conv = Conv(in_channels, out_channels, kernel_size, dilation, causal, scope='Conv_gate')
-            self._res_conv = tf.layers.Conv1D(filters=out_channels, kernel_size=1)
+            self._res_conv = Conv1D(filters=out_channels, 
+                                              kernel_size=1,
+                                              kernel_initializer=tf.initializers.he_uniform(),
+                                              bias_initializer=tf.initializers.zeros())
 
             if self._skip:
-                self._skip_conv = tf.layers.Conv1D(filters=skip_channels, kernel_size=1)
+                self._skip_conv = Conv1D(filters=skip_channels, 
+                                                   kernel_size=1, 
+                                                   kernel_initializer=tf.initializers.he_uniform(),
+                                                   bias_initializer=tf.initializers.zeros())
 
             if self._local_conditioning:
-                self._filter_conv_c = tf.layers.Conv1D(filters=out_channels, kernel_size=1)
-                self._gate_conv_c = tf.layers.Conv1D(filters=out_channels, kernel_size=1)
+                self._filter_conv_c = Conv1D(filters=out_channels, 
+                                                       kernel_size=1, 
+                                                       kernel_initializer=tf.initializers.he_uniform(),
+                                                       bias_initializer=tf.initializers.zeros())
+                
+                self._gate_conv_c = Conv1D(filters=out_channels, 
+                                                     kernel_size=1,
+                                                     kernel_initializer=tf.initializers.he_uniform(),
+                                                     bias_initializer=tf.initializers.zeros())
 
     def forward(self, tensor, c=None):
         with tf.variable_scope(self._scope):
-            with tf.name_scope('forward'):
                 h_filter = self._filter_conv(tensor)
                 h_gate = self._gate_conv(tensor)
 
                 if self._local_conditioning:
-                    # print(c)
                     h_filter += self._filter_conv_c(c)
                     h_gate += self._gate_conv_c(c)
 
@@ -128,7 +141,6 @@ class WaveNet:
 
     def forward(self, x, c=None):
         with tf.variable_scope(self._scope):
-            with tf.name_scope('forward'):
                 h = self._front_conv(x)
                 h = tf.nn.relu(h)
 
@@ -151,7 +163,6 @@ class WaveNet:
                     out = self._final_conv(out)
                     out = tf.nn.relu(out)
                     out = self._final_zero_conv(out)
-
                 return out
 
     def __call__(self, x, c=None):
