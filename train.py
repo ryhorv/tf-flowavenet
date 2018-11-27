@@ -18,20 +18,13 @@ def get_optimizer(hparams, global_step):
         optimizer = tf.train.AdamOptimizer(learning_rate)
         return optimizer, learning_rate
     
+    
 def compute_gradients(loss, vars):
     with tf.name_scope('gradients'):
         grads = tf.gradients(loss, vars)
-        with tf.name_scope('gradient_clipping'):
-            grad_vars = []
-            for grad, var in zip(grads, vars):
-                if grad is not None:
-                    name = grad.name
-                    name = name.replace(':', '_')
-                    clipped_grad = tf.clip_by_norm(grad, 1, name=name+'_norm')
-                    grad_vars.append((clipped_grad, var))
-                else:
-                    grad_vars.append((grad, var))
-                    
+        with tf.name_scope('gradient_clipping'):                   
+            clipped_grads, global_norm = tf.clip_by_global_norm(grads, 1)
+            grad_vars = list(zip(clipped_grads, vars))        
             return grad_vars
 
 
@@ -145,6 +138,7 @@ def get_summary_op(train_losses, test_losses, learning_rate, is_training):
     
 
 def train(log_dir, args, hparams, input_path):
+    tf.set_random_seed(hparams.tf_random_seed)
     save_dir = os.path.join(log_dir, 'pretrained')
     train_logdir = os.path.join(log_dir, 'train')
     test_logdir = os.path.join(log_dir, 'test')
@@ -170,24 +164,15 @@ def train(log_dir, args, hparams, input_path):
     train_op, train_model, train_losses, lr, train_predictd_wavs, train_target_wavs = get_train_model(dataset, hparams, global_step)
     test_losses, test_predicted_wavs, test_target_wavs = get_test_model(dataset, hparams)
     
-#     _, init_ops = train_model.initialize(dataset.inputs[0], dataset.local_conditions[0])
-
-    
     is_training = tf.placeholder(tf.bool, name='is_training')
     
     train_summary_op, test_summary_op = get_summary_op(train_losses, test_losses, lr, is_training)
-    
-    # eval_summary = get_eval_summary_op(is_training, 
-    #                     outputs['mel_outputs'], outputs['mel_targets'], outputs['alignments'], outputs['targets_lengths'], 
-    #                     test_outputs['mel_outputs'], test_outputs['mel_targets'], test_outputs['alignments'], test_outputs['targets_lengths'], hparams)
 
-    #book keeping
     step = 0
-    saver = tf.train.Saver()
+    saver = tf.train.Saver(var_list=tf.global_variables())
 
     print('FloWaveNet training set to a maximum of {} steps'.format(args.train_steps))
     
-    #Memory allocation on the memory
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
@@ -198,11 +183,9 @@ def train(log_dir, args, hparams, input_path):
         test_writer = tf.summary.FileWriter(test_logdir)
             
         sess.run(tf.global_variables_initializer())
-        #initializing dataset
         
+        #initializing dataset        
         dataset.initialize(sess)
-#         sess.run(init_ops)
-
 
         #saved model restoring
         if args.restore:
@@ -219,10 +202,6 @@ def train(log_dir, args, hparams, input_path):
         else:
             print('Starting new training!')
 
-        # summary_writer.add_summary(sess.run(stats), step)
-        # save_log(sess, step, model, plot_dir, wav_dir, hparams=hparams)
-        # eval_step(sess, step, eval_model, eval_plot_dir, eval_wav_dir, summary_writer=summary_writer , hparams=model._hparams)
-
         # #Training loop
         # sess.graph.finalize()
         while step < args.train_steps:
@@ -231,7 +210,12 @@ def train(log_dir, args, hparams, input_path):
             step_duration = (time.time() - start_time)
 
             message = 'Step {:7d} [{:.3f} sec/step, loss={:.5f}, log_p={:.5f}, logdet={:.5f}]'.format(step, step_duration, total_loss, log_p_loss, logdet_loss)
-            print(message, end='\r')                
+            print(message, end='\r')      
+                                    
+                
+            if total_loss > 500:
+                print('\n Loss is exploded')
+                return
 
             if step % args.summary_interval == 0:
                 print('\nWriting summary at step {}'.format(step))
