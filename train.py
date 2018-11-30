@@ -6,6 +6,8 @@ from model import FloWaveNet
 import utils
 from hparams import hparams
 import argparse
+import audio
+import numpy as np
 
 
 def get_optimizer(hparams, global_step):
@@ -25,7 +27,7 @@ def compute_gradients(loss, vars):
         with tf.name_scope('gradient_clipping'):                   
             clipped_grads, global_norm = tf.clip_by_global_norm(grads, 1)
             grad_vars = list(zip(clipped_grads, vars))        
-            return grad_vars
+            return grad_vars, global_norm
 
 
 def get_train_model(dataset, hparams, global_step):
@@ -34,6 +36,7 @@ def get_train_model(dataset, hparams, global_step):
     train_losses = []
     train_predictd_wavs = None
     train_target_wavs = None
+    grad_global_norm = None
 
     for i in range(hparams.num_gpus):
         if hparams.num_gpus > 1:
@@ -64,23 +67,14 @@ def get_train_model(dataset, hparams, global_step):
                     with tf.name_scope('loss'):
                         loss = -(log_p + logdet)
 
-
-                    grad_vars = compute_gradients(loss, tf.trainable_variables())
+                    grad_vars, global_norm = compute_gradients(loss, tf.trainable_variables())
                     tower_gradvars.append(grad_vars)
 
                     if i == 0:
                         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, name_scope)
                         train_model = model
-                        train_losses = [-(log_p + logdet), log_p, logdet]
-                        
-#                         lc = dataset.local_conditions[i]
-#                         target = dataset.inputs[i]
-#                         z = tf.random_normal(tf.shape(target))
-        
-#                         train_predictd_wavs = train_model.reverse(z, lc)
-#                         train_predictd_wavs = tf.squeeze(train_predictd_wavs)
-        
-#                         train_target_wavs = tf.squeeze(target)
+                        train_losses = [loss, log_p, logdet]
+                        grad_global_norm = global_norm
 
     consolidation_device  = '/cpu:0' if hparams.ps_device_type == 'CPU' and hparams.num_gpus > 1 else '/gpu:0'
     with tf.device(consolidation_device):
@@ -90,7 +84,7 @@ def get_train_model(dataset, hparams, global_step):
         with tf.control_dependencies(update_ops):
             train_op = optimizer.apply_gradients(grad_vars, global_step=global_step)
 
-    return train_op, train_model, train_losses, lr, train_predictd_wavs, train_target_wavs
+    return train_op, train_model, train_losses, lr, grad_global_norm
 
 def get_test_model(dataset, hparams):
     with tf.variable_scope('vocoder', reuse=tf.AUTO_REUSE):
@@ -111,30 +105,75 @@ def get_test_model(dataset, hparams):
         losses = [loss, log_p, logdet]
         return losses, None, None
     
-def get_summary_op(train_losses, test_losses, learning_rate, is_training):
+def get_summary_op(train_losses, test_losses, learning_rate, grad_global_norm, is_training):
     losses = tf.cond(is_training, true_fn=lambda: train_losses, false_fn=lambda: test_losses)
     train_summaries = []
     test_summaries = []
-    
+
     total_loss = tf.summary.scalar('losses/total_loss', losses[0])
     train_summaries.append(total_loss)
     test_summaries.append(total_loss)
-    
+
     log_p = tf.summary.scalar('losses/log_p', losses[1])
     train_summaries.append(log_p)
     test_summaries.append(log_p)
-    
+
     logdet = tf.summary.scalar('losses/logdet', losses[2])
     train_summaries.append(logdet)
     test_summaries.append(logdet)
-    
-    
-    train_summaries.append(tf.summary.scalar('learning_rate', learning_rate))  
-    
+
+    train_summaries.append(tf.summary.scalar('learning_rate', learning_rate))
+    train_summaries.append(tf.summary.scalar('gradient_global_norm', grad_global_norm))
+
     train_op = tf.summary.merge(train_summaries)
     test_op = tf.summary.merge(test_summaries)
-            
+
     return train_op, test_op
+
+def py_inv_preemphasis(audios, k, inv_preemphasize):
+    audios = [audio.inv_preemphasis(a, k, inv_preemphasize) for a in audios]
+    return np.array(audios, dtype=np.float32)
+    
+
+def get_eval_summary_op(model, dataset, hparams, is_training):
+    audio_filenames, mel_filenames, _, _ = zip(*dataset._train_meta[:2])
+    train_batch = dataset._py_load_batch([a.encode() for a in audio_filenames], [m.encode() for m in mel_filenames], hparams.eval_max_time_steps)
+
+    audio_filenames, mel_filenames, _, _ = zip(*dataset._test_meta[:2])
+    test_batch = dataset._py_load_batch([a.encode() for a in audio_filenames], [m.encode() for m in mel_filenames], hparams.eval_max_time_steps)
+
+    train_lc = tf.constant(train_batch[1], dtype=tf.float32)
+    train_z = tf.random_normal(train_batch[0].shape) * hparams.temp
+
+    train_predicted_wavs = model.reverse(train_z, train_lc)
+    train_predicted_wavs = tf.squeeze(train_predicted_wavs)
+    train_predicted_wavs = tf.py_func(py_inv_preemphasis, [train_predicted_wavs, hparams.preemphasis, hparams.preemphasize], tf.float32)
+    train_predicted_wavs.set_shape([2, None])
+
+    train_target_wavs = tf.squeeze(tf.constant(train_batch[0], dtype=tf.float32))
+    train_target_wavs = tf.py_func(py_inv_preemphasis, [train_target_wavs, hparams.preemphasis, hparams.preemphasize], tf.float32)
+    train_target_wavs.set_shape([2, None])
+
+    test_lc = tf.constant(test_batch[1], dtype=tf.float32)
+    test_z = tf.random_normal(test_batch[0].shape) * hparams.temp
+
+    test_predicted_wavs = model.reverse(test_z, test_lc)
+    test_predicted_wavs = tf.squeeze(test_predicted_wavs)
+    test_predicted_wavs = tf.py_func(py_inv_preemphasis, [test_predicted_wavs, hparams.preemphasis, hparams.preemphasize], tf.float32)
+    test_predicted_wavs.set_shape([2, None])
+
+    test_target_wavs = tf.squeeze(tf.constant(test_batch[0], dtype=tf.float32))
+    test_target_wavs = tf.py_func(py_inv_preemphasis, [test_target_wavs, hparams.preemphasis, hparams.preemphasize], tf.float32)
+    test_target_wavs.set_shape([2, None])
+    
+    predicted_wavs, target_wavs = tf.cond(is_training, true_fn=lambda: (train_predicted_wavs, train_target_wavs), false_fn=lambda: (test_predicted_wavs, test_target_wavs))
+    
+    summaries = []
+    summaries.append(tf.summary.audio('predictions', predicted_wavs, sample_rate=hparams.sample_rate))
+    summaries.append(tf.summary.audio('targets', target_wavs, sample_rate=hparams.sample_rate))
+
+    summary_op = tf.summary.merge(summaries)
+    return summary_op
     
 
 def train(log_dir, args, hparams, input_path):
@@ -161,12 +200,13 @@ def train(log_dir, args, hparams, input_path):
 
     #Set up model
     global_step = tf.Variable(0, name='global_step', trainable=False)
-    train_op, train_model, train_losses, lr, train_predictd_wavs, train_target_wavs = get_train_model(dataset, hparams, global_step)
+    train_op, train_model, train_losses, lr, grad_global_norm = get_train_model(dataset, hparams, global_step)
     test_losses, test_predicted_wavs, test_target_wavs = get_test_model(dataset, hparams)
     
     is_training = tf.placeholder(tf.bool, name='is_training')
     
-    train_summary_op, test_summary_op = get_summary_op(train_losses, test_losses, lr, is_training)
+    train_summary_op, test_summary_op = get_summary_op(train_losses, test_losses, lr, grad_global_norm, is_training)
+    eval_summary_op = get_eval_summary_op(train_model, dataset, hparams, is_training)
 
     step = 0
     saver = tf.train.Saver(var_list=tf.global_variables())
@@ -202,8 +242,7 @@ def train(log_dir, args, hparams, input_path):
         else:
             print('Starting new training!')
 
-        # #Training loop
-        # sess.graph.finalize()
+        # Training loop
         while step < args.train_steps:
             start_time = time.time()
             step, total_loss, log_p_loss, logdet_loss, opt = sess.run([global_step, train_losses[0], train_losses[1], train_losses[2], train_op])
@@ -212,9 +251,8 @@ def train(log_dir, args, hparams, input_path):
             message = 'Step {:7d} [{:.3f} sec/step, loss={:.5f}, log_p={:.5f}, logdet={:.5f}]'.format(step, step_duration, total_loss, log_p_loss, logdet_loss)
             print(message, end='\r')      
                                     
-                
             if total_loss > 500:
-                print('\n Loss is exploded')
+                print('\nLoss is exploded')
                 return
 
             if step % args.summary_interval == 0:
@@ -225,14 +263,12 @@ def train(log_dir, args, hparams, input_path):
             if step % args.checkpoint_interval == 0 or step == args.train_steps:
                 saver.save(sess, checkpoint_path, global_step=global_step)
 
-        #     if step % args.eval_interval == 0:
-        #         log('\nEvaluating at step {}'.format(step))
-        #         train_writer.add_summary(sess.run(eval_summary, feed_dict={is_training: True}), step)
-        #         test_writer.add_summary(sess.run(eval_summary, feed_dict={is_training: False}), step)
+            if step % args.eval_interval == 0:
+                print('\nEvaluating at step {}'.format(step))
+                train_writer.add_summary(sess.run(eval_summary_op, feed_dict={is_training: True}), step)
+                test_writer.add_summary(sess.run(eval_summary_op, feed_dict={is_training: False}), step)
 
         return save_dir
-
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -244,14 +280,13 @@ def main():
         help='Steps between running summary ops')
     parser.add_argument('--checkpoint_interval', type=int, default=5000,
         help='Steps between writing checkpoints')
-    parser.add_argument('--eval_interval', type=int, default=2000,
+    parser.add_argument('--eval_interval', type=int, default=5000,
         help='Steps between eval on test data')
     parser.add_argument('--train_steps', type=int, default=2000000, help='total number of model training steps')
     args = parser.parse_args()
 
     logdir = os.path.join(args.base_dir, 'logs')
     os.makedirs(logdir, exist_ok=True)
-#     print('выаыв')
     train(logdir, args, hparams, args.input)
     
 if __name__ == "__main__":

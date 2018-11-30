@@ -26,8 +26,6 @@ hparams = tf.contrib.training.HParams(
     max_abs_value = 4., #max absolute value of data. If symmetric, data will be [-max, max] else [0, max] 
     normalize_spectr = True, #whether to rescale melspectrogram to [0, 1]
 
-    #Contribution by @begeekmyfriend
-	#Spectrogram Pre-Emphasis (Lfilter: Reduce spectrogram noise and helps model certitude levels. Also allows for better G&L phase reconstruction)
 	preemphasize = False, #whether to apply filter
 	preemphasis = 0.97, #filter coefficient.
 
@@ -38,11 +36,11 @@ hparams = tf.contrib.training.HParams(
     fmax = 7600,
     
     max_time_steps = 6400,
+    eval_max_time_steps = 16000 * 4,
 
     split_random_state = 123,
     test_size = 30,
     batch_size = 5,
-
 
     causal = False,
     n_block = 8,
@@ -50,7 +48,8 @@ hparams = tf.contrib.training.HParams(
     n_layer = 2,
     affine = True,
     causality = False,
-    tf_random_seed = 75
+    tf_random_seed = 75,
+    temp = 0.7
     )
 
 def hparams_debug_string():

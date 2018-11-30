@@ -6,15 +6,15 @@ Unofficial tensorflow implementation of the paper ["FloWaveNet : A Generative Fl
 
 ## Requirements
 
-- tensorflow 1.11
 - Python 3.5
+- tensorflow 1.11
 - Librosa
 
 ## Todo list
 
 - [x] Multi-gpu training
 - [ ] Correct ActNorm initialization
-- [ ] Synthesis mode
+- [x] Synthesis mode
 - [ ] Global condition features
 
 

@@ -3,7 +3,6 @@ import numpy as np
 import os
 import audio
 from sklearn.model_selection import train_test_split
-from keras.utils import np_utils
 import multiprocessing
 
 _buffer_size = 500
@@ -73,7 +72,7 @@ class Dataset:
                 })
 
 
-    def _py_load_batch(self, audio_files, mel_files):
+    def _py_load_batch(self, audio_files, mel_files, max_time_steps=None):
         batch = []
         for audio_file, mel_file in zip(audio_files, mel_files):
             audio_file = audio_file.decode() 
@@ -82,11 +81,11 @@ class Dataset:
             sample = self._py_load_sample(audio_file, mel_file)
             batch.append(sample)
 
-        prepared_batch = self._prepare_batch(batch)
+        prepared_batch = self._prepare_batch(batch, max_time_steps)
         return prepared_batch
 
     def _load_batch(self, audio_files, mel_files):
-        batch = tf.py_func(self._py_load_batch, [audio_files, mel_files], (tf.float32, tf.float32))
+        batch = tf.py_func(self._py_load_batch, [audio_files, mel_files, self._hparams.max_time_steps], (tf.float32, tf.float32))
 
         batch[0].set_shape((None, None, 1))
         batch[1].set_shape((None, None, self._hparams.num_mels))
@@ -100,9 +99,11 @@ class Dataset:
         return input_data, local_condition_features
 
     
-    def _prepare_batch(self, batch):
+    def _prepare_batch(self, batch, max_time_steps=None):
         #Limit time steps to save GPU Memory usage
-        max_time_steps = self._hparams.max_time_steps
+        if max_time_steps is None:
+            input_lengths = [np.int32(len(x[0])) for x in batch]
+            max_time_steps = min(input_lengths)
         #Adjust time resolution for upsampling
         batch = self._adjust_time_resolution(batch, max_time_steps)
 

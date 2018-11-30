@@ -35,7 +35,7 @@ def _process_utterance(out_dir, index, wav_path, text):
         wav = wav / np.abs(wav).max() * hparams.rescaling_max
     
     wav = audio.pad_wav(wav, hparams)
-    out = wav
+    out = audio.preemphasis(wav, hparams.preemphasis, preemphasize=hparams.preemphasize)
     constant_values = 0.
     out_dtype = np.float32
     hop_size = audio.get_hop_size(hparams)
