@@ -14,7 +14,7 @@ class ActNorm:
             self._scale = tf.get_variable('scale', shape=[1, 1, in_channel], initializer=tf.initializers.ones())
             
 #             self._is_initialized = tf.get_variable('is_initialized', shape=None, name=)
-            self._is_initialized = tf.Variable(False, trainable=False, name='is_initialized')
+#             self._is_initialized = tf.Variable(False, trainable=False, name='is_initialized')
 
             self._logdet = logdet
 

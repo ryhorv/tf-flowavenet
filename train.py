@@ -30,7 +30,7 @@ def compute_gradients(loss, vars):
             return grad_vars, global_norm
 
 
-def get_train_model(dataset, hparams, global_step):
+def build_model(dataset, hparams, global_step):
     tower_gradvars = []
     train_model = None
     train_losses = []
@@ -86,24 +86,13 @@ def get_train_model(dataset, hparams, global_step):
 
     return train_op, train_model, train_losses, lr, grad_global_norm
 
-def get_test_model(dataset, hparams):
-    with tf.variable_scope('vocoder', reuse=tf.AUTO_REUSE):
-        test_model = FloWaveNet(in_channel=1,
-                                cin_channel=hparams.num_mels,
-                                n_block=hparams.n_block,
-                                n_flow=hparams.n_flow,
-                                n_layer=hparams.n_layer,
-                                affine=hparams.affine,
-                                causal=hparams.causality)
-        target = dataset.eval_inputs
-        lc = dataset.eval_local_conditions
-        log_p, logdet = test_model.forward(target, lc)
-        
-        with tf.name_scope('loss'):
-            loss = -(log_p + logdet)
-                
-        losses = [loss, log_p, logdet]
-        return losses, None, None
+def get_test_losses(model, dataset, hparams):
+    log_p, logdet = model.forward(dataset.eval_inputs, dataset.eval_local_conditions)
+    with tf.name_scope('loss'):
+        loss = -(log_p + logdet)                
+    
+    losses = [loss, log_p, logdet]
+    return losses
     
 def get_summary_op(train_losses, test_losses, learning_rate, grad_global_norm, is_training):
     losses = tf.cond(is_training, true_fn=lambda: train_losses, false_fn=lambda: test_losses)
@@ -130,47 +119,39 @@ def get_summary_op(train_losses, test_losses, learning_rate, grad_global_norm, i
 
     return train_op, test_op
 
-def py_inv_preemphasis(audios, k, inv_preemphasize):
-    audios = [audio.inv_preemphasis(a, k, inv_preemphasize) for a in audios]
-    return np.array(audios, dtype=np.float32)
-    
-
 def get_eval_summary_op(model, dataset, hparams, is_training):
-    audio_filenames, mel_filenames, _, _ = zip(*dataset._train_meta[:2])
+    inv_preemphasis = lambda audios, k, inv: np.array([audio.inv_preemphasis(a, k, inv) for a in audios], dtype=np.float32)
+    def get_audio(model, batch, hparams):
+        lc = tf.constant(batch[1], dtype=tf.float32)
+        z = tf.random_normal(batch[0].shape) * hparams.temp
+        
+        predicted_wavs = model.reverse(z, lc)
+        predicted_wavs = tf.squeeze(predicted_wavs, axis=-1)
+        predicted_wavs = tf.py_func(inv_preemphasis, [predicted_wavs, hparams.preemphasis, hparams.preemphasize], tf.float32)
+        predicted_wavs.set_shape([hparams.eval_samples, None])
+        
+        target_wavs = tf.squeeze(tf.constant(batch[0], dtype=tf.float32), axis=-1)
+        target_wavs = tf.py_func(inv_preemphasis, [target_wavs, hparams.preemphasis, hparams.preemphasize], tf.float32)
+        target_wavs.set_shape([hparams.eval_samples, None])
+        
+        return predicted_wavs, target_wavs
+    
+    audio_filenames, mel_filenames, _, _ = zip(*dataset._train_meta[:hparams.eval_samples])
     train_batch = dataset._py_load_batch([a.encode() for a in audio_filenames], [m.encode() for m in mel_filenames], hparams.eval_max_time_steps)
 
-    audio_filenames, mel_filenames, _, _ = zip(*dataset._test_meta[:2])
+    audio_filenames, mel_filenames, _, _ = zip(*dataset._test_meta[:hparams.eval_samples])
     test_batch = dataset._py_load_batch([a.encode() for a in audio_filenames], [m.encode() for m in mel_filenames], hparams.eval_max_time_steps)
-
-    train_lc = tf.constant(train_batch[1], dtype=tf.float32)
-    train_z = tf.random_normal(train_batch[0].shape) * hparams.temp
-
-    train_predicted_wavs = model.reverse(train_z, train_lc)
-    train_predicted_wavs = tf.squeeze(train_predicted_wavs)
-    train_predicted_wavs = tf.py_func(py_inv_preemphasis, [train_predicted_wavs, hparams.preemphasis, hparams.preemphasize], tf.float32)
-    train_predicted_wavs.set_shape([2, None])
-
-    train_target_wavs = tf.squeeze(tf.constant(train_batch[0], dtype=tf.float32))
-    train_target_wavs = tf.py_func(py_inv_preemphasis, [train_target_wavs, hparams.preemphasis, hparams.preemphasize], tf.float32)
-    train_target_wavs.set_shape([2, None])
-
-    test_lc = tf.constant(test_batch[1], dtype=tf.float32)
-    test_z = tf.random_normal(test_batch[0].shape) * hparams.temp
-
-    test_predicted_wavs = model.reverse(test_z, test_lc)
-    test_predicted_wavs = tf.squeeze(test_predicted_wavs)
-    test_predicted_wavs = tf.py_func(py_inv_preemphasis, [test_predicted_wavs, hparams.preemphasis, hparams.preemphasize], tf.float32)
-    test_predicted_wavs.set_shape([2, None])
-
-    test_target_wavs = tf.squeeze(tf.constant(test_batch[0], dtype=tf.float32))
-    test_target_wavs = tf.py_func(py_inv_preemphasis, [test_target_wavs, hparams.preemphasis, hparams.preemphasize], tf.float32)
-    test_target_wavs.set_shape([2, None])
     
-    predicted_wavs, target_wavs = tf.cond(is_training, true_fn=lambda: (train_predicted_wavs, train_target_wavs), false_fn=lambda: (test_predicted_wavs, test_target_wavs))
+    train_predicted_wavs, train_target_wavs = get_audio(model, train_batch, hparams)
+    test_predicted_wavs, test_target_wavs = get_audio(model, test_batch, hparams)
+    
+    predicted_wavs, target_wavs = tf.cond(is_training, 
+                                          true_fn=lambda: (train_predicted_wavs, train_target_wavs), 
+                                          false_fn=lambda: (test_predicted_wavs, test_target_wavs))
     
     summaries = []
-    summaries.append(tf.summary.audio('predictions', predicted_wavs, sample_rate=hparams.sample_rate))
-    summaries.append(tf.summary.audio('targets', target_wavs, sample_rate=hparams.sample_rate))
+    summaries.append(tf.summary.audio('predictions', predicted_wavs, sample_rate=hparams.sample_rate, max_outputs=hparams.eval_samples))
+    summaries.append(tf.summary.audio('targets', target_wavs, sample_rate=hparams.sample_rate, max_outputs=hparams.eval_samples))
 
     summary_op = tf.summary.merge(summaries)
     return summary_op
@@ -200,13 +181,13 @@ def train(log_dir, args, hparams, input_path):
 
     #Set up model
     global_step = tf.Variable(0, name='global_step', trainable=False)
-    train_op, train_model, train_losses, lr, grad_global_norm = get_train_model(dataset, hparams, global_step)
-    test_losses, test_predicted_wavs, test_target_wavs = get_test_model(dataset, hparams)
+    train_op, model, train_losses, lr, grad_global_norm = build_model(dataset, hparams, global_step)
+    test_losses = get_test_losses(model, dataset, hparams)
     
     is_training = tf.placeholder(tf.bool, name='is_training')
     
     train_summary_op, test_summary_op = get_summary_op(train_losses, test_losses, lr, grad_global_norm, is_training)
-    eval_summary_op = get_eval_summary_op(train_model, dataset, hparams, is_training)
+    eval_summary_op = get_eval_summary_op(model, dataset, hparams, is_training)
 
     step = 0
     saver = tf.train.Saver(var_list=tf.global_variables())

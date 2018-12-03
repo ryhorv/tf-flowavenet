@@ -26,8 +26,8 @@ hparams = tf.contrib.training.HParams(
     max_abs_value = 4., #max absolute value of data. If symmetric, data will be [-max, max] else [0, max] 
     normalize_spectr = True, #whether to rescale melspectrogram to [0, 1]
 
-	preemphasize = False, #whether to apply filter
-	preemphasis = 0.97, #filter coefficient.
+    preemphasize = False, #whether to apply filter
+    preemphasis = 0.97, #filter coefficient.
 
     #Limits
     min_level_db = -100,
@@ -36,11 +36,13 @@ hparams = tf.contrib.training.HParams(
     fmax = 7600,
     
     max_time_steps = 6400,
-    eval_max_time_steps = 16000 * 4,
+    
+    eval_max_time_steps = 16000 * 5,
+    eval_samples = 1,
 
     split_random_state = 123,
     test_size = 30,
-    batch_size = 5,
+    batch_size = 3,
 
     causal = False,
     n_block = 8,
