@@ -4,8 +4,8 @@ from convolutional import Conv1D
 
 class Conv:
     def __init__(self, in_channels, out_channels, kernel_size=3, dilation=1, causal=True, scope='Conv'):
-        with tf.name_scope(scope):
-            self._scope = scope
+        with tf.variable_scope(scope) as vs:
+            self._vs = vs
             self._causal = causal
 
             if self._causal:
@@ -21,13 +21,15 @@ class Conv:
                                         bias_initializer=tf.initializers.he_uniform())
 
     def forward(self, tensor):
-        padded_tensor = tf.pad(tensor, ((0, 0), (self._padding, self._padding), (0, 0)))
-        out = self._conv(padded_tensor)
+        with tf.variable_scope(self._vs, auxiliary_name_scope=False) as vs1:
+            with tf.name_scope(vs1.original_name_scope):
+                padded_tensor = tf.pad(tensor, ((0, 0), (self._padding, self._padding), (0, 0)))
+                out = self._conv(padded_tensor)
 
-        if self._causal and self._padding is not 0:
-            out = out[:, :-self._padding]
+                if self._causal and self._padding is not 0:
+                    out = out[:, :-self._padding]
 
-        return out
+                return out
 
     def __call__(self, tensor):
         return self.forward(tensor)
@@ -35,8 +37,8 @@ class Conv:
 
 class ZeroConv1d:
     def __init__(self, in_channel, out_channel, scope='ZeroConv1d'):
-        with tf.name_scope(scope):
-            self._scope = scope
+        with tf.variable_scope(scope) as vs:
+            self._vs = vs
             self._conv = Conv1D(filters=out_channel, 
                                           kernel_size=1, 
                                           padding='valid', 
@@ -47,9 +49,11 @@ class ZeroConv1d:
 
     
     def forward(self, x):
-        out = self._conv(x)
-        out = out * tf.exp(self._scale * 3)
-        return out
+        with tf.variable_scope(self._vs, auxiliary_name_scope=False) as vs1:
+            with tf.name_scope(vs1.original_name_scope):
+                out = self._conv(x)
+                out = out * tf.exp(self._scale * 3)
+                return out
 
     def __call__(self, x):
         return self.forward(x)
@@ -58,8 +62,8 @@ class ZeroConv1d:
 class ResBlock:
     def __init__(self, in_channels, out_channels, skip_channels, kernel_size, dilation,
                  cin_channels=None, local_conditioning=True, causal=False, scope='ResBlock'):
-        
-        with tf.name_scope(scope):
+        with tf.variable_scope(scope) as vs:
+            self._vs = vs
             self._scope = scope
             self._causal = causal
             self._local_conditioning = local_conditioning
@@ -91,18 +95,20 @@ class ResBlock:
                                                      bias_initializer=tf.initializers.he_uniform())
 
     def forward(self, tensor, c=None):
-        h_filter = self._filter_conv(tensor)
-        h_gate = self._gate_conv(tensor)
+        with tf.variable_scope(self._vs, auxiliary_name_scope=False) as vs1:
+            with tf.name_scope(vs1.original_name_scope):
+                h_filter = self._filter_conv(tensor)
+                h_gate = self._gate_conv(tensor)
 
-        if self._local_conditioning:
-            h_filter += self._filter_conv_c(c)
-            h_gate += self._gate_conv_c(c)
+                if self._local_conditioning:
+                    h_filter += self._filter_conv_c(c)
+                    h_gate += self._gate_conv_c(c)
 
-        out = tf.tanh(h_filter) * tf.sigmoid(h_gate)
+                out = tf.tanh(h_filter) * tf.sigmoid(h_gate)
 
-        res = self._res_conv(out)
-        skip = self._skip_conv(out) if self._skip else None
-        return (tensor + res) * tf.sqrt(0.5), skip
+                res = self._res_conv(out)
+                skip = self._skip_conv(out) if self._skip else None
+                return (tensor + res) * tf.sqrt(0.5), skip
 
     def __call__(self, tensor, c=None):
         return self.forward(tensor, c)
@@ -113,7 +119,8 @@ class WaveNet:
                  residual_channels=256, gate_channels=256, skip_channels=256,
                  kernel_size=3, cin_channels=80, causal=True, scope='WaveNet'):
 
-        with tf.name_scope(scope):
+        with tf.variable_scope(scope) as vs:
+            self._vs = vs
             self._scope = scope
             self._skip = True if skip_channels is not None else False
 
@@ -135,29 +142,31 @@ class WaveNet:
             self._final_zero_conv = ZeroConv1d(last_channels, out_channels)
 
     def forward(self, x, c=None):
-        h = self._front_conv(x)
-        h = tf.nn.relu(h)
+        with tf.variable_scope(self._vs, auxiliary_name_scope=False) as vs1:
+            with tf.name_scope(vs1.original_name_scope):
+                h = self._front_conv(x)
+                h = tf.nn.relu(h)
 
-        skip = []
-        for i, f in enumerate(self._res_blocks):
-            if self._skip:
-                h, s = f(h, c)
-                skip.append(s)
-            else:
-                h, _ = f(h, c)
+                skip = []
+                for i, f in enumerate(self._res_blocks):
+                    if self._skip:
+                        h, s = f(h, c)
+                        skip.append(s)
+                    else:
+                        h, _ = f(h, c)
 
-        if self._skip:
-            out = tf.add_n(skip)
-            out = tf.nn.relu(out)
-            out = self._final_conv(out)
-            out = tf.nn.relu(out)
-            out = self._final_zero_conv(out)
-        else:
-            out = tf.nn.relu(h)
-            out = self._final_conv(out)
-            out = tf.nn.relu(out)
-            out = self._final_zero_conv(out)
-        return out
+                if self._skip:
+                    out = tf.add_n(skip)
+                    out = tf.nn.relu(out)
+                    out = self._final_conv(out)
+                    out = tf.nn.relu(out)
+                    out = self._final_zero_conv(out)
+                else:
+                    out = tf.nn.relu(h)
+                    out = self._final_conv(out)
+                    out = tf.nn.relu(out)
+                    out = self._final_zero_conv(out)
+                return out
 
     def __call__(self, x, c=None):
         return self.forward(x, c)
