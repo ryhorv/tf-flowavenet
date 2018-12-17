@@ -13,9 +13,6 @@ class ActNorm:
             self._loc = tf.get_variable('loc', shape=[1, 1, in_channel], initializer=tf.initializers.zeros())
             self._scale = tf.get_variable('scale', shape=[1, 1, in_channel], initializer=tf.initializers.ones())
             
-#             self._is_initialized = tf.get_variable('is_initialized', shape=None, name=)
-#             self._is_initialized = tf.Variable(False, trainable=False, name='is_initialized')
-
             self._logdet = logdet
 
     def initialize(self, x):
@@ -76,12 +73,7 @@ class AffineCoupling:
         with tf.variable_scope(self._vs, auxiliary_name_scope=False) as vs1:
             with tf.name_scope(vs1.original_name_scope):
                 in_a, in_b = tf.split(x, axis=2, num_or_size_splits=2)
-                # in_a.set_shape([None, None, self._in_channel//2])
-                # in_b.set_shape([None, None, self._in_channel - (self._in_channel//2)])
-
                 c_a, c_b = tf.split(c, axis=2, num_or_size_splits=2)
-                # c_a.set_shape([None, None, tf.shape(c)[2] // 2])
-                # c_b.set_shape([None, None, tf.shape(c)[2] - (tf.shape(c)[2] // 2)])
 
                 if self._affine:
                     log_s, t = tf.split(self._net(in_a, c_a), axis=2, num_or_size_splits=2)                    
@@ -101,7 +93,6 @@ class AffineCoupling:
                 c_a, c_b = tf.split(c, axis=2, num_or_size_splits=2)
 
                 if self._affine:
-                    # log_s, t = self.net(out_a, c_a).chunk(2, 1)
                     log_s, t = tf.split(self._net(out_a, c_a), axis=2, num_or_size_splits=2)
                     in_b = out_b * tf.exp(log_s) + t
                 else:
@@ -262,7 +253,7 @@ class FloWaveNet:
                 cin_channel *= 2
 
             self._upsample_conv = []
-            for s in [16, 16]:
+            for s in [12, 16]:
                 convt = Conv2DTranspose(filters=1, 
                                         kernel_size=(2 * s, 3), 
                                         padding='same', 
@@ -270,13 +261,7 @@ class FloWaveNet:
                                         activation=lambda x: tf.nn.leaky_relu(x, 0.4),
                                         kernel_initializer=tf.initializers.he_uniform(),
                                         bias_initializer=tf.initializers.zeros())
-#                 convt = Conv2DTranspose(filters=1, 
-#                                         kernel_size=(2 * s, 3), 
-#                                         padding='same', 
-#                                         strides=(s, 1), 
-#                                         activation=lambda x: tf.nn.leaky_relu(x, 0.4),
-#                                         kernel_initializer=tf.initializers.constant(0.001),
-#                                         bias_initializer=tf.initializers.constant(0.001))
+
                 self._upsample_conv.append(convt) 
                 
                 
@@ -314,9 +299,6 @@ class FloWaveNet:
     def reverse(self, z, c):  
         with tf.variable_scope(self._vs, auxiliary_name_scope=False) as vs1:
             with tf.name_scope(vs1.original_name_scope):
-                # c = tf.cond(tf.equal(tf.shape(z)[1], tf.shape(c)[1]), 
-                #             true_fn=lambda: c, 
-                #             false_fn=lambda: self.upsample(c))
                 c = self.upsample(c)
                 x = z
 

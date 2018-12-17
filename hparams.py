@@ -14,8 +14,8 @@ hparams = tf.contrib.training.HParams(
 
     #Mel spectrogram
     n_fft = 1024, #Extra window size is filled with 0 paddings to match this parameter
-    hop_size = 256, #For 22050Hz, 275 ~= 12.5 ms
-    win_size = 1024, #For 22050Hz, 1100 ~= 50 ms (If None, win_size = n_fft)
+    hop_size = 192, #For 22050Hz, 275 ~= 12.5 ms
+    win_size = 800, #For 22050Hz, 1100 ~= 50 ms (If None, win_size = n_fft)
     sample_rate = 16000, #22050 Hz (corresponding to ljspeech dataset)
 
 
@@ -26,7 +26,7 @@ hparams = tf.contrib.training.HParams(
     max_abs_value = 4., #max absolute value of data. If symmetric, data will be [-max, max] else [0, max] 
     normalize_spectr = True, #whether to rescale melspectrogram to [0, 1]
 
-    preemphasize = False, #whether to apply filter
+    preemphasize = True, #whether to apply filter
     preemphasis = 0.97, #filter coefficient.
 
     #Limits
@@ -45,7 +45,7 @@ hparams = tf.contrib.training.HParams(
     batch_size = 4,
 
     causal = False,
-    n_block = 8,
+    n_block = 6,
     n_flow = 6,
     n_layer = 2,
     affine = True,
