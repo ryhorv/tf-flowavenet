@@ -17,10 +17,15 @@ def build_from_path(in_dir, out_dir, num_workers=1):
     book_folders = [f for f in os.listdir(in_dir) if os.path.isdir(os.path.join(in_dir, f))]
     for book in book_folders:
         with open(os.path.join(in_dir, book, 'metadata.csv'), encoding='utf-8') as f:
-            for line in f:
+            lines = f.read().strip().split('\n')
+            for line in lines:
                 parts = line.strip().split('|')
                 wav_path = os.path.join(in_dir, book, 'wavs', '%s.wav' % parts[0])
-                text = parts[2]
+                try:
+                    text = parts[2]
+                except:
+                    print(os.path.join(in_dir, book, 'metadata.csv'))
+                    print(parts)
                 futures.append(executor.submit(
                     partial(_process_utterance, out_dir, index, wav_path, text)))
                 index += 1

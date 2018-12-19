@@ -253,7 +253,7 @@ class FloWaveNet:
                 cin_channel *= 2
 
             self._upsample_conv = []
-            for s in [12, 16]:
+            for s in [16, 16]:
                 convt = Conv2DTranspose(filters=1, 
                                         kernel_size=(2 * s, 3), 
                                         padding='same', 
