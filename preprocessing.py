@@ -33,27 +33,35 @@ def build_from_path(in_dir, out_dir, num_workers=1):
 
 
 def _process_utterance(out_dir, index, wav_path, text):
-    # Load the audio to a numpy array:
-    wav = audio.load_wav(wav_path, hparams.sample_rate)
-    
-    if hparams.rescale:
-        wav = wav / np.abs(wav).max() * hparams.rescaling_max
-    
-    wav = audio.pad_wav(wav, hparams)
-    out = audio.preemphasis(wav, hparams.preemphasis, preemphasize=hparams.preemphasize)
-    constant_values = 0.
+    wav, sr = librosa.load(wav_path, sr=hparams.sample_rate)
+
+    wav = wav / np.abs(wav).max() * hparams.rescaling_max
+    out = wav
+    constant_values = 0.0
     out_dtype = np.float32
-    hop_size = audio.get_hop_size(hparams)
-    
-     # Compute the mel scale spectrogram from the wav
-    mel_spectrogram = audio.melspectrogram(wav, hparams).astype(out_dtype).T
-    mel_frames = mel_spectrogram.shape[0]
-    
-    if hparams.normalize_spectr:
-        T2_output_range = (-hparams.max_abs_value, hparams.max_abs_value) if hparams.symmetric_mels else (0, hparams.max_abs_value)
-        mel_spectrogram = np.interp(mel_spectrogram, T2_output_range, (0, 1)).astype(np.float32)  
-        
-    out = out[:mel_frames * hop_size]
+
+    # Compute a mel-scale spectrogram from the trimmed wav:
+    # (N, D)
+    mel_spectrogram = librosa.feature.melspectrogram(wav, sr=sr, n_fft=hparams.n_fft, hop_length=hparams.hop_size, n_mels=hparams.num_mels, fmin=hparams.fmin, fmax=hparams.fmax).T
+
+    # mel_spectrogram = np.round(mel_spectrogram, decimals=2)
+    mel_spectrogram = 20 * np.log10(np.maximum(1e-4, mel_spectrogram)) - hparams.ref_level_db
+    mel_spectrogram = np.clip((mel_spectrogram - hparams.min_level_db) / (-hparams.min_level_db), 0, 1)
+
+    pad = (out.shape[0] // hparams.hop_size + 1) * hparams.hop_size - out.shape[0]
+    pad_l = pad // 2
+    pad_r = pad // 2 + pad % 2
+
+    # zero pad for quantized signal
+    out = np.pad(out, (pad_l, pad_r), mode="constant", constant_values=constant_values)
+    N = mel_spectrogram.shape[0]
+    assert len(out) >= N * hop_length
+
+    # time resolution adjustment
+    # ensure length of raw audio is multiple of hop_size so that we can use
+    # transposed convolution to upsample
+    out = out[:N * hop_length]
+    assert len(out) % hop_length == 0
 
     timesteps = len(out)
 

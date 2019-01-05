@@ -16,12 +16,12 @@ def save_wav(wav, path, sr):
     
 def preemphasis(wav, k, preemphasize=True):
     if preemphasize:
-        return signal.lfilter([1, -k], [1], wav)
+        return signal.lfilter([1, -k], [1], wav).astype(np.float32)
     return wav
 
 def inv_preemphasis(wav, k, inv_preemphasize=True):
     if inv_preemphasize:
-        return signal.lfilter([1], [1, -k], wav)
+        return signal.lfilter([1], [1, -k], wav).astype(np.float32)
     return wav
 
 def pad_wav(y, hparams):

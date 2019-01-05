@@ -9,25 +9,13 @@ hparams = tf.contrib.training.HParams(
 
     #Audio
     num_mels = 80, #Number of mel-spectrogram channels and local conditioning dimensionality
-    rescale = True, #Whether to rescale audio prior to preprocessing
     rescaling_max = 0.999, #Rescaling value
 
     #Mel spectrogram
     n_fft = 1024, #Extra window size is filled with 0 paddings to match this parameter
     hop_size = 256, #For 22050Hz, 275 ~= 12.5 ms
-    win_size = 1024, #For 22050Hz, 1100 ~= 50 ms (If None, win_size = n_fft)
     sample_rate = 22050, #22050 Hz (corresponding to ljspeech dataset)
-
-    #Mel and Linear spectrograms normalization/scaling and clipping
-    signal_normalization = True,
-    allow_clipping_in_normalization = True, #Only relevant if mel_normalization = True
-    symmetric_mels = True, #Whether to scale the data to be symmetric around 0
-    max_abs_value = 4., #max absolute value of data. If symmetric, data will be [-max, max] else [0, max] 
-    normalize_spectr = True, #whether to rescale melspectrogram to [0, 1]
-
-    preemphasize = True, #whether to apply filter
-    preemphasis = 0.97, #filter coefficient.
-
+    
     #Limits
     min_level_db = -100,
     ref_level_db = 20,
@@ -52,8 +40,3 @@ hparams = tf.contrib.training.HParams(
     tf_random_seed = 75,
     temp = 0.7
     )
-
-def hparams_debug_string():
-    values = hparams.values()
-    hp = ['  %s: %s' % (name, values[name]) for name in sorted(values) if name != 'sentences']
-    return 'Hyperparameters:\n' + '\n'.join(hp)
