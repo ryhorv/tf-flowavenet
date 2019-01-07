@@ -55,13 +55,13 @@ def _process_utterance(out_dir, index, wav_path, text):
     # zero pad for quantized signal
     out = np.pad(out, (pad_l, pad_r), mode="constant", constant_values=constant_values)
     N = mel_spectrogram.shape[0]
-    assert len(out) >= N * hop_length
+    assert len(out) >= N * hparams.hop_size
 
     # time resolution adjustment
     # ensure length of raw audio is multiple of hop_size so that we can use
     # transposed convolution to upsample
-    out = out[:N * hop_length]
-    assert len(out) % hop_length == 0
+    out = out[:N * hparams.hop_size]
+    assert len(out) % hparams.hop_size == 0
 
     timesteps = len(out)
 

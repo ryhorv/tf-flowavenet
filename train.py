@@ -37,6 +37,9 @@ def build_model(dataset, hparams, global_step):
     train_predictd_wavs = None
     train_target_wavs = None
     grad_global_norm = None
+    
+    consolidation_device  = '/cpu:0' if hparams.ps_device_type == 'CPU' and hparams.num_gpus > 1 else '/gpu:0'
+    init = tf.placeholder_with_default(False, None, name='init')
 
     for i in range(hparams.num_gpus):
         if hparams.num_gpus > 1:
@@ -59,6 +62,7 @@ def build_model(dataset, hparams, global_step):
                                     n_block=hparams.n_block,
                                     n_flow=hparams.n_flow,
                                     n_layer=hparams.n_layer,
+                                    init=init,
                                     affine=hparams.affine,
                                     causal=hparams.causality)
 
@@ -76,7 +80,7 @@ def build_model(dataset, hparams, global_step):
                         train_losses = [loss, log_p, logdet]
                         grad_global_norm = global_norm
 
-    consolidation_device  = '/cpu:0' if hparams.ps_device_type == 'CPU' and hparams.num_gpus > 1 else '/gpu:0'
+    
     with tf.device(consolidation_device):
         grad_vars = utils.average_gradients(tower_gradvars)
         optimizer, lr = get_optimizer(hparams, global_step)
@@ -84,7 +88,7 @@ def build_model(dataset, hparams, global_step):
         with tf.control_dependencies(update_ops):
             train_op = optimizer.apply_gradients(grad_vars, global_step=global_step)
 
-    return train_op, train_model, train_losses, lr, grad_global_norm
+    return train_op, train_model, train_losses, lr, grad_global_norm, init
 
 def get_test_losses(model, dataset, hparams):
     log_p, logdet = model.forward(dataset.eval_inputs, dataset.eval_local_conditions)
@@ -120,19 +124,19 @@ def get_summary_op(train_losses, test_losses, learning_rate, grad_global_norm, i
     return train_op, test_op
 
 def get_eval_summary_op(model, dataset, hparams, is_training):
-    inv_preemphasis = lambda audios, k, inv: np.array([audio.inv_preemphasis(a, k, inv) for a in audios], dtype=np.float32)
+#     inv_preemphasis = lambda audios, k, inv: np.array([audio.inv_preemphasis(a, k, inv) for a in audios], dtype=np.float32)
     def get_audio(model, batch, hparams):
         lc = tf.constant(batch[1], dtype=tf.float32)
         z = tf.random_normal(batch[0].shape) * hparams.temp
         
         predicted_wavs = model.reverse(z, lc)
         predicted_wavs = tf.squeeze(predicted_wavs, axis=-1)
-        predicted_wavs = tf.py_func(inv_preemphasis, [predicted_wavs, hparams.preemphasis, hparams.preemphasize], tf.float32)
-        predicted_wavs.set_shape([hparams.eval_samples, None])
+#         predicted_wavs = tf.py_func(inv_preemphasis, [predicted_wavs, hparams.preemphasis, hparams.preemphasize], tf.float32)
+#         predicted_wavs.set_shape([hparams.eval_samples, None])
         
         target_wavs = tf.squeeze(tf.constant(batch[0], dtype=tf.float32), axis=-1)
-        target_wavs = tf.py_func(inv_preemphasis, [target_wavs, hparams.preemphasis, hparams.preemphasize], tf.float32)
-        target_wavs.set_shape([hparams.eval_samples, None])
+#         target_wavs = tf.py_func(inv_preemphasis, [target_wavs, hparams.preemphasis, hparams.preemphasize], tf.float32)
+#         target_wavs.set_shape([hparams.eval_samples, None])
         
         return predicted_wavs, target_wavs
     
@@ -181,7 +185,7 @@ def train(log_dir, args, hparams, input_path):
 
     #Set up model
     global_step = tf.Variable(0, name='global_step', trainable=False)
-    train_op, model, train_losses, lr, grad_global_norm = build_model(dataset, hparams, global_step)
+    train_op, model, train_losses, lr, grad_global_norm, init = build_model(dataset, hparams, global_step)
     test_losses = get_test_losses(model, dataset, hparams)
     
     is_training = tf.placeholder(tf.bool, name='is_training')
@@ -217,12 +221,18 @@ def train(log_dir, args, hparams, input_path):
                 if (checkpoint_state and checkpoint_state.model_checkpoint_path):
                     print('Loading checkpoint {}'.format(checkpoint_state.model_checkpoint_path))
                     saver.restore(sess, checkpoint_state.model_checkpoint_path)
+                else:
+                    print('Init ActNorm layer')
+                    step, tmp, _ = sess.run([global_step, train_losses[0], train_op], feed_dict={init: True})
+                    print(tmp)
 
             except tf.errors.OutOfRangeError as e:
                 print('Cannot restore checkpoint: {}'.format(e))
         else:
             print('Starting new training!')
+#             step, _ = sess.run([global_step, train_op], feed_dict={init: True})
 
+        
         # Training loop
         while step < args.train_steps:
             start_time = time.time()
@@ -230,7 +240,8 @@ def train(log_dir, args, hparams, input_path):
             step_duration = (time.time() - start_time)
 
             message = 'Step {:7d} [{:.3f} sec/step, loss={:.5f}, log_p={:.5f}, logdet={:.5f}]'.format(step, step_duration, total_loss, log_p_loss, logdet_loss)
-            print(message, end='\r')      
+            print(message, end='\r')
+#             print(message)
                                     
             if total_loss > 500:
                 print('\nLoss is exploded')
@@ -259,7 +270,7 @@ def main():
     parser.add_argument('--restore', type=bool, default=True, help='Set this to False to do a fresh training')
     parser.add_argument('--summary_interval', type=int, default=500,
         help='Steps between running summary ops')
-    parser.add_argument('--checkpoint_interval', type=int, default=5000,
+    parser.add_argument('--checkpoint_interval', type=int, default=2000,
         help='Steps between writing checkpoints')
     parser.add_argument('--eval_interval', type=int, default=5000,
         help='Steps between eval on test data')

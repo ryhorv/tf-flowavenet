@@ -13,7 +13,7 @@ Unofficial tensorflow implementation of the paper ["FloWaveNet : A Generative Fl
 ## Todo list
 
 - [x] Multi-gpu training
-- [ ] Correct ActNorm initialization
+- [x] Correct ActNorm initialization
 - [x] Synthesis mode
 - [ ] Global condition features
 

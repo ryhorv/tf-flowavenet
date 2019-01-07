@@ -35,7 +35,8 @@ class Dataset:
             self._mel_filenames = tf.placeholder(tf.string, shape=[None], name='mel_filenames')
 
             dataset = tf.data.Dataset.from_tensor_slices((self._audio_filenames, self._mel_filenames)) 
-            dataset = dataset.apply(tf.contrib.data.shuffle_and_repeat(buffer_size=_buffer_size))
+#             dataset = dataset.apply(tf.contrib.data.shuffle_and_repeat(buffer_size=_buffer_size))
+            dataset = dataset.apply(tf.data.experimental.shuffle_and_repeat(buffer_size=_buffer_size, seed=422))
             dataset = dataset.batch(hparams.batch_size)
             dataset = dataset.map(self._load_batch, n_cpu)
             dataset = dataset.prefetch(hparams.num_gpus)
