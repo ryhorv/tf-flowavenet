@@ -25,21 +25,21 @@ def compute_gradients(loss, vars):
         grads = tf.gradients(loss, vars)
 
         # Gradient clipping from the original FloWaveNet model
-        # with tf.name_scope('gradient_clipping'):                   
-        #     clipped_grads, global_norm = tf.clip_by_global_norm(grads, 1)
-        #     grad_vars = list(zip(clipped_grads, vars))        
-        #     return grad_vars, global_norm
-
-        # Gradient clipping from the ClariNet model
         with tf.name_scope('gradient_clipping'):                   
-            clipped_grads_by_norm, global_norm = tf.clip_by_global_norm(grads, 100)
-            clipped_grads = []
-            for grad in clipped_grads_by_norm:
-                clipped_grad = tf.clip_by_value(grad, -5, 5) if grad is not None else None
-                clipped_grads.append(clipped_grad)
-
+            clipped_grads, global_norm = tf.clip_by_global_norm(grads, 1)
             grad_vars = list(zip(clipped_grads, vars))        
             return grad_vars, global_norm
+
+        # Gradient clipping from the ClariNet model
+        # with tf.name_scope('gradient_clipping'):                   
+        #     clipped_grads_by_norm, global_norm = tf.clip_by_global_norm(grads, 100)
+        #     clipped_grads = []
+        #     for grad in clipped_grads_by_norm:
+        #         clipped_grad = tf.clip_by_value(grad, -5, 5) if grad is not None else None
+        #         clipped_grads.append(clipped_grad)
+
+        #     grad_vars = list(zip(clipped_grads, vars))        
+        #     return grad_vars, global_norm
 
 
 def build_model(dataset, hparams, global_step, init):
