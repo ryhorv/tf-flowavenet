@@ -33,10 +33,10 @@ def compute_gradients(loss, vars):
         # Gradient clipping from the ClariNet model
         with tf.name_scope('gradient_clipping'):                   
             clipped_grads_by_norm, global_norm = tf.clip_by_global_norm(grads, 100)
-            clippen_grads = []
+            clipped_grads = []
             for grad in clipped_grads_by_norm:
-                clipped_grad = tf.clip_by_value(clipped_grad, -5, 5) if grad is not None else None
-                clippen_grads.append(clipped_grad)
+                clipped_grad = tf.clip_by_value(grad, -5, 5) if grad is not None else None
+                clipped_grads.append(clipped_grad)
 
             grad_vars = list(zip(clipped_grads, vars))        
             return grad_vars, global_norm
@@ -67,14 +67,7 @@ def build_model(dataset, hparams, global_step, init):
         with tf.variable_scope('vocoder', reuse=tf.AUTO_REUSE):  
             with tf.name_scope('tower_%d' % i) as name_scope:
                 with tf.device(device_setter):
-                    model = FloWaveNet(in_channel=1,
-                                    cin_channel=hparams.num_mels,
-                                    n_block=hparams.n_block,
-                                    n_flow=hparams.n_flow,
-                                    n_layer=hparams.n_layer,
-                                    init=init,
-                                    affine=hparams.affine,
-                                    causal=hparams.causality)
+                    model = FloWaveNet(hparams, init=init)
 
                     log_p, logdet = model.forward(dataset.inputs[i], dataset.local_conditions[i])
                     
@@ -188,7 +181,7 @@ def train(log_dir, args, hparams, input_path):
         dataset = Dataset(input_path, args.input_dir, hparams)
 
     #Set up model
-    init = tf.placeholder_with_default(False, shape=[None], name='init')
+    init = tf.placeholder_with_default(False, shape=None, name='init')
     global_step = tf.Variable(0, name='global_step', trainable=False)
     train_op, model, train_losses, lr, grad_global_norm = build_model(dataset, hparams, global_step, init)
     test_losses = get_test_losses(model, dataset, hparams)
