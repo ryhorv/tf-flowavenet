@@ -71,20 +71,3 @@ def average_gradients(tower_grads):
                 grad_and_var = (grad, v)
                 average_grads.append(grad_and_var)
         return average_grads
-
-def _nccl_average_gradients(tower_grads):
-    average_grads = []
-    for grad_and_vars in zip(*tower_grads):
-        grads = []
-        for g, _ in grad_and_vars:
-            # Add 0 dimension to the gradients to represent the tower.
-            if g is not None:
-                grads.append(g)
-                
-        if len(grads) > 0:
-            avg_grads = tf.contrib.nccl.reduce_sum(grads) / len(grads)
-            
-            v = grad_and_vars[0][1]
-            average_grads.append((avg_grads, v))
-            
-    return average_grads

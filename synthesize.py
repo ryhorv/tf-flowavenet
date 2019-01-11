@@ -4,28 +4,21 @@ from model import FloWaveNet
 from hparams import hparams
 import argparse
 import numpy as np
-import audio
 from tqdm import tqdm
+import librosa
 
 def get_model(hparams):
     with tf.variable_scope('vocoder'):
-        with tf.name_scope('tower_0'):
-#             z = tf.placeholder(tf.float32, shape=[None, None, 1], name='z')
-            lc = tf.placeholder(tf.float32, shape=[None, None, hparams.num_mels])
-            z = tf.random_normal([tf.shape(lc)[0], tf.shape(lc)[1] * audio.get_hop_size(hparams), 1]) * hparams.temp
+        lc = tf.placeholder(tf.float32, shape=[None, None, hparams.num_mels])
+        shape = tf.shape(lc)
+        z = tf.random_normal([shape[0], shape[1] * hparams.hop_size, 1]) * hparams.temp
 
-            model = FloWaveNet(in_channel=1,
-                               cin_channel=hparams.num_mels,
-                               n_block=hparams.n_block,
-                               n_flow=hparams.n_flow,
-                               n_layer=hparams.n_layer,
-                               affine=hparams.affine,
-                               causal=hparams.causality, scope='FloWaveNet')
+        model = FloWaveNet(hparams, scope='FloWaveNet')
 
-            predictions = model.reverse(z, lc)
-            predictions = tf.squeeze(predictions)
-            
-            return predictions, lc
+        predictions = model.reverse(z, lc)
+        predictions = tf.squeeze(predictions)
+        
+        return predictions, lc
         
 def synthesize(args, hparams):
     predictions, lc_phr = get_model(hparams)
@@ -53,7 +46,7 @@ def synthesize(args, hparams):
         result = sess.run(predictions, feed_dict={lc_phr: mel})
         audio_filename = mel_filename[:-4] + '.wav'
         audio_path = os.path.join(args.output_dir, audio_filename)
-        audio.save_wav(result, audio_path, sr=hparams.sample_rate)
+        librosa.output.write_wav(audio_path, result, sr=hparams.sample_rate)
     
 def main():
     parser = argparse.ArgumentParser()

@@ -28,6 +28,7 @@ hparams = tf.contrib.training.HParams(
     eval_samples = 1,
 
     split_random_state = 123,
+    shuffle_random_seed = 42,
     test_size = 10,
     batch_size = 8,
 
@@ -38,5 +39,6 @@ hparams = tf.contrib.training.HParams(
     affine = True,
     causality = False,
     tf_random_seed = 75,
-    temp = 0.7
+    temp = 0.7,
+    upsample_scales  = [16, 16]
     )

@@ -3,20 +3,19 @@ from modules import WaveNet
 from math import log, pi
 from convolutional import Conv2DTranspose
 
-logabs = lambda x: tf.log(tf.abs(x))
 
 class ActNorm:
+    """
+    This layer is implemented based on the implementation from the tensor2tensor library 
+    https://github.com/tensorflow/tensor2tensor/blob/master/tensor2tensor/models/research/glow_ops_test.py
+    """
     def __init__(self, in_channel, logdet=True, init=False, logscale=3., scope='ActNorm'):
         with tf.variable_scope(scope) as vs:
             self._vs = vs
             self._scope = scope
             self._logscale = logscale
             self._in_channel = in_channel
-#             self._loc = tf.get_variable('loc', shape=[1, 1, in_channel], initializer=tf.initializers.zeros())
-#             self._scale = tf.get_variable('scale', shape=[1, 1, in_channel], initializer=tf.initializers.ones())
             self._init = init
-#             self._is_initialized = tf.get_variable('is_initialized', trainable=False, initializer=False)
-            
             self._logdet = logdet
         
     def assign(self, w, initial_value):
@@ -114,7 +113,7 @@ class AffineCoupling:
                             kernel_size=3, cin_channels=cin_channel // 2, causal=causal)
                             
 
-    def forward(self, x, c=None):
+    def forward(self, x, c):
         with tf.variable_scope(self._vs, auxiliary_name_scope=False) as vs1:
             with tf.name_scope(vs1.original_name_scope):
                 in_a, in_b = tf.split(x, axis=2, num_or_size_splits=2)
@@ -131,7 +130,7 @@ class AffineCoupling:
 
                 return tf.concat([in_a, out_b], 2), logdet
 
-    def reverse(self, output, c=None):
+    def reverse(self, output, c):
         with tf.variable_scope(self._vs, auxiliary_name_scope=False) as vs1:
             with tf.name_scope(vs1.original_name_scope):
                 out_a, out_b = tf.split(output, axis=2, num_or_size_splits=2)
@@ -146,10 +145,10 @@ class AffineCoupling:
 
                 return tf.concat([out_a, in_b], 2)
 
-    def __call__(self, x, c=None):
+    def __call__(self, x, c):
         return self.forward(x, c)
 
-def change_order(x, c=None):
+def change_order(x, c):
     x_a, x_b = tf.split(x, axis=2, num_or_size_splits=2)
     c_a, c_b = tf.split(c, axis=2, num_or_size_splits=2)
 
@@ -250,20 +249,24 @@ class Block:
         return self.forward(x, c)
 
 class FloWaveNet:
-    def __init__(self, in_channel, cin_channel, n_block, n_flow, n_layer, init, affine=True, causal=False, scope='FloWaveNet'):
+    def __init__(self, hparams, init=False, scope='FloWaveNet'):
         with tf.variable_scope(scope) as vs:
             self._vs = vs
             self._scope = scope
             self._blocks = []
-            self._n_block = n_block
+            self._n_block = hparams.n_block
+            self._cin_channels = hparams.num_mels
+
+            in_channels = 1
+            cin_channels = self._cin_channels
             for i in range(self._n_block):
-                self._blocks.append(Block(in_channel, cin_channel, n_flow, n_layer, init=init, affine=affine,
-                                        causal=causal, scope='Block_%d' % i))
-                in_channel *= 2
-                cin_channel *= 2
+                self._blocks.append(Block(in_channels, cin_channels, hparams.n_flow, hparams.n_layer, init=init, affine=hparams.affine,
+                                        causal=hparams.causality, scope='Block_%d' % i))
+                in_channels *= 2
+                cin_channels *= 2
 
             self._upsample_conv = []
-            for s in [16, 16]:
+            for s in hparams.upsample_scales:
                 convt = Conv2DTranspose(filters=1, 
                                         kernel_size=(2 * s, 3), 
                                         padding='same', 
@@ -297,16 +300,13 @@ class FloWaveNet:
                 x = z
 
                 x_channels = 1
-                c_channels = 80
+                c_channels = self._cin_channels
                 for _ in range(self._n_block):
-                    # b_size, T, _ = tf.shape(x)
                     shape = tf.shape(x)
-                    # x_channels = x.shape[2]
                     x = tf.reshape(x, [shape[0], shape[1] // 2, 2, x_channels])
                     x = tf.transpose(x, [0, 1, 3, 2])
                     x = tf.reshape(x, [shape[0], shape[1] // 2, 2 * x_channels])
 
-                    # c_channels = c.shape[2]
                     c = tf.reshape(c, [shape[0], shape[1] // 2, 2, c_channels])
                     c = tf.transpose(c, [0, 1, 3, 2])
                     c = tf.reshape(c, [shape[0], shape[1]  // 2, 2 * c_channels])
@@ -316,16 +316,6 @@ class FloWaveNet:
                 for i, block in enumerate(self._blocks[::-1]):
                     x, c = block.reverse(x, c)
                 return x
-
-    def check_recon(self, x, c):
-        with tf.name_scope('check_recon'):
-            c = self.upsample(c)
-            out = x
-            for block in self._blocks:
-                out, c, _ = block(out, c)
-            for i, block in enumerate(self._blocks[::-1]):
-                out, c = block.reverse(out, c)
-            return out
 
     def upsample(self, c):
         with tf.name_scope('upsample'):

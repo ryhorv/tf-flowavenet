@@ -1,7 +1,6 @@
 import tensorflow as tf
 import numpy as np
 import os
-import audio
 from sklearn.model_selection import train_test_split
 import multiprocessing
 
@@ -11,7 +10,6 @@ _pad = 0
 class Dataset:
     def __init__(self,  metadata_filename, base_dir, hparams):
         self._hparams = hparams
-        np.random.seed(42)
 
         #Base directory of the project (to map files from different locations)
         self._base_dir = base_dir
@@ -35,8 +33,7 @@ class Dataset:
             self._mel_filenames = tf.placeholder(tf.string, shape=[None], name='mel_filenames')
 
             dataset = tf.data.Dataset.from_tensor_slices((self._audio_filenames, self._mel_filenames)) 
-#             dataset = dataset.apply(tf.contrib.data.shuffle_and_repeat(buffer_size=_buffer_size))
-            dataset = dataset.apply(tf.data.experimental.shuffle_and_repeat(buffer_size=_buffer_size, seed=422))
+            dataset = dataset.apply(tf.data.experimental.shuffle_and_repeat(buffer_size=_buffer_size, seed=self._hparams.shuffle_random_seed))
             dataset = dataset.batch(hparams.batch_size)
             dataset = dataset.map(self._load_batch, n_cpu)
             dataset = dataset.prefetch(hparams.num_gpus)
@@ -136,12 +133,12 @@ class Dataset:
             x, c= b
             self._assert_ready_for_upsample(x, c)
             if max_time_steps is not None:
-                max_steps = _ensure_divisible(max_time_steps, audio.get_hop_size(self._hparams), True)
+                max_steps = _ensure_divisible(max_time_steps, self._hparams.hop_size, True)
                 if len(x) > max_time_steps:
-                    max_time_frames = max_steps // audio.get_hop_size(self._hparams)
+                    max_time_frames = max_steps // self._hparams.hop_size
                     start = np.random.randint(0, len(c) - max_time_frames)
-                    time_start = start * audio.get_hop_size(self._hparams)
-                    x = x[time_start: time_start + max_time_frames * audio.get_hop_size(self._hparams)]
+                    time_start = start * self._hparams.hop_size
+                    x = x[time_start: time_start + max_time_frames * self._hparams.hop_size]
                     c = c[start: start + max_time_frames, :]
                     self._assert_ready_for_upsample(x, c)
 
@@ -149,7 +146,7 @@ class Dataset:
         return new_batch
 
     def _assert_ready_for_upsample(self, x, c):
-        assert len(x) % len(c) == 0 and len(x) // len(c) == audio.get_hop_size(self._hparams)
+        assert len(x) % len(c) == 0 and len(x) // len(c) == self._hparams.hop_size
 
 def _pad_inputs(x, maxlen, _pad=0):
     return np.pad(x, [(0, maxlen - len(x)), (0, 0)], mode='constant', constant_values=_pad)

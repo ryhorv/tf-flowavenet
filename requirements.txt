@@ -1,5 +1,5 @@
 numpy
 scipy
-tensorflow-gpu
+tensorflow-gpu==1.12
 librosa
 tqdm

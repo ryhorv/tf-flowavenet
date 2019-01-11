@@ -6,7 +6,6 @@ import librosa
 from multiprocessing import cpu_count
 import argparse
 from hparams import hparams
-import audio
 
 
 def build_from_path(in_dir, out_dir, num_workers=1):
