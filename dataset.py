@@ -31,8 +31,9 @@ class Dataset:
         with tf.device('/cpu:0'):
             self._audio_filenames = tf.placeholder(tf.string, shape=[None], name='audio_filenames')
             self._mel_filenames = tf.placeholder(tf.string, shape=[None], name='mel_filenames')
+            self._speaker_ids = tf.placeholder(tf.int32, shape=[None], name='speaker_ids')
 
-            dataset = tf.data.Dataset.from_tensor_slices((self._audio_filenames, self._mel_filenames)) 
+            dataset = tf.data.Dataset.from_tensor_slices((self._audio_filenames, self._mel_filenames, self._speaker_ids)) 
             dataset = dataset.apply(tf.data.experimental.shuffle_and_repeat(buffer_size=_buffer_size, seed=self._hparams.shuffle_random_seed))
             dataset = dataset.batch(hparams.batch_size)
             dataset = dataset.map(self._load_batch, n_cpu)
@@ -41,60 +42,67 @@ class Dataset:
             self._train_iterator = dataset.make_initializable_iterator()
             self.inputs = []
             self.local_conditions = []
+            self.speaker_ids = []
             for i in range(hparams.num_gpus):
                 train_batch = self._train_iterator.get_next()
                 self.inputs.append(train_batch[0])
                 self.local_conditions.append(train_batch[1])
+                self.speaker_ids.append(train_batch[2])
                    
             self._test_iterator = dataset.make_initializable_iterator()
             test_batch = self._test_iterator.get_next()
             self.eval_inputs = test_batch[0]
             self.eval_local_conditions = test_batch[1]
+            self.eval_speaker_ids = test_batch[1]
                             
 
     def initialize(self, sess):
-        audio_filenames, mel_filenames, _, _ = zip(*self._train_meta)
+        # audio_filename, mel_filename, timesteps, speaker_id, text
+        audio_filenames, mel_filenames, _, speaker_ids, _ = zip(*self._train_meta)
 
         sess.run(self._train_iterator.initializer, 
                 feed_dict={
                     self._audio_filenames: audio_filenames, 
-                    self._mel_filenames: mel_filenames
+                    self._mel_filenames: mel_filenames,
+                    self._speaker_ids: speaker_ids
                 })
 
-        audio_filenames, mel_filenames, _, _ = zip(*self._test_meta)
+        audio_filenames, mel_filenames, _, speaker_ids, _ = zip(*self._test_meta)
 
         sess.run(self._test_iterator.initializer, 
                 feed_dict={
                     self._audio_filenames: audio_filenames, 
-                    self._mel_filenames: mel_filenames
+                    self._mel_filenames: mel_filenames,
+                    self._speaker_ids: speaker_ids
                 })
 
 
-    def _py_load_batch(self, audio_files, mel_files, max_time_steps=None):
+    def _py_load_batch(self, audio_files, mel_files, speaker_ids, max_time_steps=None):
         batch = []
-        for audio_file, mel_file in zip(audio_files, mel_files):
+        for audio_file, mel_file, speaker_id in zip(audio_files, mel_files, speaker_ids):
             audio_file = audio_file.decode() 
             mel_file = mel_file.decode()
 
-            sample = self._py_load_sample(audio_file, mel_file)
+            sample = self._py_load_sample(audio_file, mel_file, speaker_id)
             batch.append(sample)
 
         prepared_batch = self._prepare_batch(batch, max_time_steps)
         return prepared_batch
 
-    def _load_batch(self, audio_files, mel_files):
-        batch = tf.py_func(self._py_load_batch, [audio_files, mel_files, self._hparams.max_time_steps], (tf.float32, tf.float32))
+    def _load_batch(self, audio_files, mel_files, speaker_ids):
+        batch = tf.py_func(self._py_load_batch, [audio_files, mel_files, speaker_ids, self._hparams.max_time_steps], (tf.float32, tf.float32, tf.int32))
 
         batch[0].set_shape((None, None, 1))
         batch[1].set_shape((None, None, self._hparams.num_mels))
+        batch[2].set_shape((None, 1))
         return batch
 
 
-    def _py_load_sample(self, audio_file, mel_file):
+    def _py_load_sample(self, audio_file, mel_file, speaker_id):
         input_data = np.load(os.path.join(self._base_dir, audio_file))
         local_condition_features = np.load(os.path.join(self._base_dir, mel_file))
 
-        return input_data, local_condition_features
+        return input_data, local_condition_features, speaker_id
 
     
     def _prepare_batch(self, batch, max_time_steps=None):
@@ -109,11 +117,12 @@ class Dataset:
         input_lengths = [np.int32(len(x[0])) for x in batch]
         max_input_length = max(input_lengths)
         max_c_length = max([np.int32(len(x[1])) for x in batch])
+        speaker_ids = np.array([x[2] for x in batch], dtype=np.int32).reshape(-1, 1)
 
         inputs = self._prepare_inputs([x[0] for x in batch], max_input_length)
         local_condition_features = self._prepare_local_conditions([x[1] for x in batch], max_c_length)
 
-        return inputs, local_condition_features
+        return inputs, local_condition_features, speaker_ids
 
     def _prepare_inputs(self, inputs, maxlen):
         x_batch = np.stack([_pad_inputs(x.reshape(-1, 1), maxlen) for x in inputs]).astype(np.float32)
@@ -130,7 +139,7 @@ class Dataset:
         '''
         new_batch = []
         for b in batch:
-            x, c= b
+            x, c, g = b
             self._assert_ready_for_upsample(x, c)
             if max_time_steps is not None:
                 max_steps = _ensure_divisible(max_time_steps, self._hparams.hop_size, True)
@@ -142,7 +151,7 @@ class Dataset:
                     c = c[start: start + max_time_frames, :]
                     self._assert_ready_for_upsample(x, c)
 
-            new_batch.append((x, c))
+            new_batch.append((x, c, g))
         return new_batch
 
     def _assert_ready_for_upsample(self, x, c):

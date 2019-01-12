@@ -6,6 +6,7 @@ import librosa
 from multiprocessing import cpu_count
 import argparse
 from hparams import hparams
+from tqdm import tqdm
 
 
 def build_from_path(in_dir, out_dir, num_workers=1):
@@ -13,25 +14,38 @@ def build_from_path(in_dir, out_dir, num_workers=1):
     futures = []
     index = 1
     
-    book_folders = [f for f in os.listdir(in_dir) if os.path.isdir(os.path.join(in_dir, f))]
-    for book in book_folders:
-        with open(os.path.join(in_dir, book, 'metadata.csv'), encoding='utf-8') as f:
+    if hparams.gin_channels > 0:
+        speakers = [f for f in os.listdir(in_dir) if os.path.isdir(os.path.join(in_dir, f))]
+        books = []
+        with open('speakers.txt', 'wt', encoding='utf-8') as f:
+            for i, speaker in enumerate(speakers):
+                f.write('%s - %i\n' % (speaker, i))
+                speaker_books = [f for f in os.listdir(os.path.join(in_dir, speaker)) if os.path.isdir(os.path.join(in_dir, speaker, f))]
+                for speaker_book in speaker_books:
+                    book_path = os.path.join(in_dir, speaker, speaker_book)
+                    books.append((i, book_path))
+            f.flush()
+    else:
+        books = [(0, os.path.join(in_dir, f)) for f in os.listdir(in_dir) if os.path.isdir(os.path.join(in_dir, f))]
+                
+    for speaker_id, book in books:
+        with open(os.path.join(book, 'metadata.csv'), encoding='utf-8') as f:
             lines = f.read().strip().split('\n')
             for line in lines:
                 parts = line.strip().split('|')
-                wav_path = os.path.join(in_dir, book, 'wavs', '%s.wav' % parts[0])
+                wav_path = os.path.join(book, 'wavs', '%s.wav' % parts[0])
                 try:
                     text = parts[2]
                 except:
-                    print(os.path.join(in_dir, book, 'metadata.csv'))
+                    print(os.path.join(book, 'metadata.csv'))
                     print(parts)
                 futures.append(executor.submit(
-                    partial(_process_utterance, out_dir, index, wav_path, text)))
+                    partial(_process_utterance, out_dir, index, wav_path, text, speaker_id)))
                 index += 1
-    return [future.result() for future in futures]
+    return [future.result() for future in tqdm(futures) if future.result() is not None]
 
 
-def _process_utterance(out_dir, index, wav_path, text):
+def _process_utterance(out_dir, index, wav_path, text, speaker_id):
     wav, sr = librosa.load(wav_path, sr=hparams.sample_rate)
 
     wav = wav / np.abs(wav).max() * hparams.rescaling_max
@@ -73,7 +87,7 @@ def _process_utterance(out_dir, index, wav_path, text):
             mel_spectrogram.astype(np.float32), allow_pickle=False)
 
     # Return a tuple describing this training example:
-    return audio_filename, mel_filename, timesteps, text
+    return audio_filename, mel_filename, timesteps, speaker_id, text
 
 
 def preprocess(in_dir, out_dir, num_workers):
@@ -89,7 +103,7 @@ def write_metadata(metadata, out_dir):
     frames = sum([m[2] for m in metadata])
     hours = frames / hparams.sample_rate / 3600
     print('Wrote %d utterances, %d time steps (%.2f hours)' % (len(metadata), frames, hours))
-    print('Max input length:  %d' % max(len(m[3]) for m in metadata))
+    print('Max input length:  %d' % max(len(m[4]) for m in metadata))
     print('Max output length: %d' % max(m[2] for m in metadata))
 
 

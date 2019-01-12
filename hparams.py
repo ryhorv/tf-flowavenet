@@ -19,7 +19,7 @@ hparams = tf.contrib.training.HParams(
     #Limits
     min_level_db = -100,
     ref_level_db = 20,
-    fmin = 125, #Set this to 75 if your speaker is male! if female, 125 should help taking off noise. (To test depending on dataset)
+    fmin = 75, #Set this to 75 if your speaker is male! if female, 125 should help taking off noise. (To test depending on dataset)
     fmax = 7600,
     
     max_time_steps = 6400,
@@ -31,6 +31,9 @@ hparams = tf.contrib.training.HParams(
     shuffle_random_seed = 42,
     test_size = 10,
     batch_size = 8,
+
+    gin_channels = 32,
+    n_speakers = 7,
 
     causal = False,
     n_block = 8,

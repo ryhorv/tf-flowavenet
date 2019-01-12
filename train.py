@@ -69,7 +69,7 @@ def build_model(dataset, hparams, global_step, init):
                 with tf.device(device_setter):
                     model = FloWaveNet(hparams, init=init)
 
-                    log_p, logdet = model.forward(dataset.inputs[i], dataset.local_conditions[i])
+                    log_p, logdet = model.forward(dataset.inputs[i], dataset.local_conditions[i], dataset.speaker_ids[i])
                     
                     with tf.name_scope('loss'):
                         loss = -(log_p + logdet)
@@ -94,7 +94,7 @@ def build_model(dataset, hparams, global_step, init):
     return train_op, train_model, train_losses, lr, grad_global_norm
 
 def get_test_losses(model, dataset, hparams):
-    log_p, logdet = model.forward(dataset.eval_inputs, dataset.eval_local_conditions)
+    log_p, logdet = model.forward(dataset.eval_inputs, dataset.eval_local_conditions, dataset.eval_speaker_ids)
     with tf.name_scope('loss'):
         loss = -(log_p + logdet)                
     
@@ -130,8 +130,9 @@ def get_eval_summary_op(model, dataset, hparams, is_training):
     def get_audio(model, batch, hparams):
         lc = tf.constant(batch[1], dtype=tf.float32)
         z = tf.random_normal(batch[0].shape) * hparams.temp
+        speaker_ids = tf.constant(batch[2], dtype=tf.int32)
         
-        predicted_wavs = model.reverse(z, lc)
+        predicted_wavs = model.reverse(z, lc, speaker_ids)
         predicted_wavs = tf.squeeze(predicted_wavs, axis=-1)
         
         target_wavs = tf.squeeze(tf.constant(batch[0], dtype=tf.float32), axis=-1)        
