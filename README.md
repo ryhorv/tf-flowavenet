@@ -12,7 +12,7 @@ Unofficial tensorflow implementation of the paper ["FloWaveNet : A Generative Fl
 
 ## How to use
 
-1. Download the [LJ-Speech dataset](https://keithito.com/LJ-Speech-Dataset/) and unzip in to a new folder in the current dir.
+1. Download the [LJ-Speech dataset](https://keithito.com/LJ-Speech-Dataset/) and unzip to a new folder in the current dir.
 
 2. Preprocess dataset using the following command: 
 
