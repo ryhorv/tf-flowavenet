@@ -94,7 +94,7 @@ class Dataset:
 
         batch[0].set_shape((None, None, 1))
         batch[1].set_shape((None, None, self._hparams.num_mels))
-        batch[2].set_shape((None, 1))
+        batch[2].set_shape((None, ))
         return batch
 
 
@@ -117,7 +117,7 @@ class Dataset:
         input_lengths = [np.int32(len(x[0])) for x in batch]
         max_input_length = max(input_lengths)
         max_c_length = max([np.int32(len(x[1])) for x in batch])
-        speaker_ids = np.array([x[2] for x in batch], dtype=np.int32).reshape(-1, 1)
+        speaker_ids = np.array([x[2] for x in batch], dtype=np.int32)
 
         inputs = self._prepare_inputs([x[0] for x in batch], max_input_length)
         local_condition_features = self._prepare_local_conditions([x[1] for x in batch], max_c_length)
