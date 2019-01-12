@@ -118,13 +118,16 @@ class AffineCoupling:
             with tf.name_scope(vs1.original_name_scope):
                 in_a, in_b = tf.split(x, axis=2, num_or_size_splits=2)
                 c_a, c_b = tf.split(c, axis=2, num_or_size_splits=2)
+                
+                if g is not None:
+                    g_a, g_b = tf.split(g, axis=2, num_or_size_splits=2)
 
                 if self._affine:
-                    log_s, t = tf.split(self._net(in_a, c_a, g), axis=2, num_or_size_splits=2)                    
+                    log_s, t = tf.split(self._net(in_a, c_a, g_a), axis=2, num_or_size_splits=2)                    
                     out_b = (in_b - t) * tf.exp(-log_s)
                     logdet = tf.reduce_mean(-log_s) / 2
                 else:
-                    net_out = self._net(in_a, c_a, g)
+                    net_out = self._net(in_a, c_a, g_a)
                     out_b = in_b + net_out
                     logdet = None
 
@@ -136,11 +139,14 @@ class AffineCoupling:
                 out_a, out_b = tf.split(output, axis=2, num_or_size_splits=2)
                 c_a, c_b = tf.split(c, axis=2, num_or_size_splits=2)
 
+                if g is not None:
+                    g_a, g_b = tf.split(g, axis=2, num_or_size_splits=2)
+
                 if self._affine:
-                    log_s, t = tf.split(self._net(out_a, c_a, g), axis=2, num_or_size_splits=2)
+                    log_s, t = tf.split(self._net(out_a, c_a, g_a), axis=2, num_or_size_splits=2)
                     in_b = out_b * tf.exp(log_s) + t
                 else:
-                    net_out = self._net(out_a, c_a, g)
+                    net_out = self._net(out_a, c_a, g_a)
                     in_b = out_b - net_out
 
                 return tf.concat([out_a, in_b], 2)
@@ -148,11 +154,15 @@ class AffineCoupling:
     def __call__(self, x, c, g=None):
         return self.forward(x, c, g)
 
-def change_order(x, c):
+def change_order(x, c, g=None):
     x_a, x_b = tf.split(x, axis=2, num_or_size_splits=2)
     c_a, c_b = tf.split(c, axis=2, num_or_size_splits=2)
 
-    return tf.concat([x_b, x_a], 2), tf.concat([c_b, c_a], 2)
+    if g is not None:
+        g_a, g_b = tf.split(g, axis=2, num_or_size_splits=2)
+        return tf.concat([x_b, x_a], 2), tf.concat([c_b, c_a], 2), tf.concat([g_b, g_a], 2)
+
+    return tf.concat([x_b, x_a], 2), tf.concat([c_b, c_a], 2), None
 
 class Flow:
     def __init__(self, in_channel, cin_channel, filter_size, num_layer, init, affine=True, causal=False, scope='Flow'):
@@ -168,20 +178,20 @@ class Flow:
             with tf.name_scope(vs1.original_name_scope):
                 out, logdet = self._actnorm(x)
                 out, det = self._coupling(out, c, g)
-                out, c = change_order(out, c)
+                out, c, g = change_order(out, c, g)
 
                 if det is not None:
                     logdet = logdet + det
 
-                return out, c, logdet
+                return out, c, g, logdet
 
     def reverse(self, output, c, g=None):
         with tf.variable_scope(self._vs, auxiliary_name_scope=False) as vs1:
             with tf.name_scope(vs1.original_name_scope):
-                output, c = change_order(output, c)
+                output, c, g = change_order(output, c, g)
                 x = self._coupling.reverse(output, c, g)
                 x = self._actnorm.reverse(x)
-                return x, c
+                return x, c, g
 
     def __call__(self, x, c, g=None):
         return self.forward(x, c, g=None)
@@ -215,13 +225,19 @@ class Block:
                     squeezed_c = tf.transpose(squeezed_c, [0, 1, 3, 2])
                     c = tf.reshape(squeezed_c, [shape[0], shape[1] // 2, 2 * c.shape[2]])
 
+                if g is not None:
+                    with tf.name_scope('squeeze_g'):
+                        squeezed_g = tf.reshape(g, [shape[0], shape[1] // 2, 2, g.shape[2]])
+                        squeezed_g = tf.transpose(squeezed_g, [0, 1, 3, 2])
+                        g = tf.reshape(squeezed_g, [shape[0], shape[1] // 2, 2 * g.shape[2]])
+
                 logdet = []
                 for flow in self._flows:
-                    out, c, det = flow(out, c, g)
+                    out, c, g, det = flow(out, c, g)
                     logdet.append(det)
 
                 logdet = tf.add_n(logdet)  
-                return out, c, logdet
+                return out, c, g, logdet
 
     def reverse(self, output, c, g=None):
         with tf.variable_scope(self._vs, auxiliary_name_scope=False) as vs1:
@@ -229,7 +245,7 @@ class Block:
                 x = output
 
                 for flow in self._flows[::-1]:
-                    x, c = flow.reverse(x, c, g)
+                    x, c, g = flow.reverse(x, c, g)
 
                 shape = tf.shape(x)
 
@@ -243,7 +259,13 @@ class Block:
                     unsqueezed_c = tf.transpose(unsqueezed_c, [0, 1, 3, 2])
                     unsqueezed_c = tf.reshape(unsqueezed_c, [shape[0], shape[1] * 2, c.shape[2] // 2])
 
-                return unsqueezed_x, unsqueezed_c
+                if g is not None:
+                    with tf.name_scope('unsqueezed_g'):
+                        unsqueezed_g = tf.reshape(g, [shape[0], shape[1], g.shape[2] // 2, 2])
+                        unsqueezed_g = tf.transpose(unsqueezed_g, [0, 1, 3, 2])
+                        unsqueezed_g = tf.reshape(unsqueezed_g, [shape[0], shape[1] * 2, g.shape[2] // 2])
+
+                return unsqueezed_x, unsqueezed_c, unsqueezed_g
 
     def __call__(self, x, c, g=None):
         return self.forward(x, c, g)
@@ -295,12 +317,13 @@ class FloWaveNet:
                 if g is not None and self._hparams.gin_channels > 0:
                     g_embeddings = tf.nn.embedding_lookup(self.speaker_embeddings, g)
                     g_embeddings = tf.expand_dims(g_embeddings, axis=1)
+                    g_embeddings = tf.tile(g_embeddings, (1, tf.shape(c)[1], 1))
                 else:
                     g_embeddings = None
 
 
                 for block in self._blocks:
-                    out, c, logdet_new = block(out, c, g_embeddings)
+                    out, c, g_embeddings, logdet_new = block(out, c, g_embeddings)
                     logdet.append(logdet_new)
 
                 logdet = tf.add_n(logdet)
@@ -319,6 +342,7 @@ class FloWaveNet:
                 if g is not None and self._hparams.gin_channels > 0:
                     g_embeddings = tf.nn.embedding_lookup(self.speaker_embeddings, g)
                     g_embeddings = tf.expand_dims(g_embeddings, axis=1)
+                    g_embeddings = tf.tile(g_embeddings, (1, tf.shape(c)[1], 1))
                 else:
                     g_embeddings = None
 
@@ -326,6 +350,8 @@ class FloWaveNet:
 
                 x_channels = 1
                 c_channels = self._cin_channels
+                g_channels = self._hparams.gin_channels
+
                 for _ in range(self._n_block):
                     shape = tf.shape(x)
                     x = tf.reshape(x, [shape[0], shape[1] // 2, 2, x_channels])
@@ -335,11 +361,19 @@ class FloWaveNet:
                     c = tf.reshape(c, [shape[0], shape[1] // 2, 2, c_channels])
                     c = tf.transpose(c, [0, 1, 3, 2])
                     c = tf.reshape(c, [shape[0], shape[1]  // 2, 2 * c_channels])
+
+                    if g_embeddings is not None:
+                        g_embeddings = tf.reshape(g_embeddings, [shape[0], shape[1] // 2, 2, g_channels])
+                        g_embeddings = tf.transpose(g_embeddings, [0, 1, 3, 2])
+                        g_embeddings = tf.reshape(g_embeddings, [shape[0], shape[1]  // 2, 2 * g_channels])
+                        g_channels = g_channels * 2
+
+
                     c_channels = c_channels * 2
                     x_channels = x_channels * 2
 
                 for i, block in enumerate(self._blocks[::-1]):
-                    x, c = block.reverse(x, c, g_embeddings)
+                    x, c, g_channels = block.reverse(x, c, g_embeddings)
                 return x
 
     def upsample(self, c):

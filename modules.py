@@ -117,7 +117,6 @@ class ResBlock:
                     h_gate += self._gate_conv_c(c)
 
                 if self._global_conditioning and g is not None:
-                    g = tf.tile(g, (1, tf.shape(c)[1], 1))
                     h_filter += self._filter_conv_g(g)
                     h_gate += self._gate_conv_g(g)
 
