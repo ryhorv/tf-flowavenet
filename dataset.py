@@ -53,7 +53,7 @@ class Dataset:
             test_batch = self._test_iterator.get_next()
             self.eval_inputs = test_batch[0]
             self.eval_local_conditions = test_batch[1]
-            self.eval_speaker_ids = test_batch[1]
+            self.eval_speaker_ids = test_batch[2]
                             
 
     def initialize(self, sess):

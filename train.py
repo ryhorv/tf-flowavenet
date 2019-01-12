@@ -138,11 +138,11 @@ def get_eval_summary_op(model, dataset, hparams, is_training):
         target_wavs = tf.squeeze(tf.constant(batch[0], dtype=tf.float32), axis=-1)        
         return predicted_wavs, target_wavs
     
-    audio_filenames, mel_filenames, _, _ = zip(*dataset._train_meta[:hparams.eval_samples])
-    train_batch = dataset._py_load_batch([a.encode() for a in audio_filenames], [m.encode() for m in mel_filenames], hparams.eval_max_time_steps)
+    audio_filenames, mel_filenames, _, speaker_ids, _ = zip(*dataset._train_meta[:hparams.eval_samples])
+    train_batch = dataset._py_load_batch([a.encode() for a in audio_filenames], [m.encode() for m in mel_filenames], speaker_ids, hparams.eval_max_time_steps)
 
-    audio_filenames, mel_filenames, _, _ = zip(*dataset._test_meta[:hparams.eval_samples])
-    test_batch = dataset._py_load_batch([a.encode() for a in audio_filenames], [m.encode() for m in mel_filenames], hparams.eval_max_time_steps)
+    audio_filenames, mel_filenames, _, speaker_ids, _ = zip(*dataset._test_meta[:hparams.eval_samples])
+    test_batch = dataset._py_load_batch([a.encode() for a in audio_filenames], [m.encode() for m in mel_filenames], speaker_ids, hparams.eval_max_time_steps)
     
     train_predicted_wavs, train_target_wavs = get_audio(model, train_batch, hparams)
     test_predicted_wavs, test_target_wavs = get_audio(model, test_batch, hparams)
