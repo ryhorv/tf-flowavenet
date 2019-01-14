@@ -68,7 +68,6 @@ def build_model(dataset, hparams, global_step, init):
             with tf.name_scope('tower_%d' % i) as name_scope:
                 with tf.device(device_setter):
                     model = FloWaveNet(hparams, init=init)
-
                     log_p, logdet = model.forward(dataset.inputs[i], dataset.local_conditions[i], dataset.speaker_ids[i])
                     
                     with tf.name_scope('loss'):
