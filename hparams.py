@@ -32,7 +32,7 @@ hparams = tf.contrib.training.HParams(
     test_size = 10,
     batch_size = 8,
 
-    gin_channels = 32,
+    gin_channels = -1,
     n_speakers = 7,
 
     causal = False,

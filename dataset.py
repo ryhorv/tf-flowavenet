@@ -43,7 +43,7 @@ class Dataset:
             self.inputs = []
             self.local_conditions = []
             self.speaker_ids = []
-            for i in range(hparams.num_gpus):
+            for _ in range(hparams.num_gpus):
                 train_batch = self._train_iterator.get_next()
                 self.inputs.append(train_batch[0])
                 self.local_conditions.append(train_batch[1])

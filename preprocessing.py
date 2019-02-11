@@ -7,6 +7,7 @@ from multiprocessing import cpu_count
 import argparse
 from hparams import hparams
 from tqdm import tqdm
+from tfrecord import TFRecordCreator
 
 
 def build_from_path(in_dir, out_dir, num_workers=1):
@@ -55,7 +56,13 @@ def _process_utterance(out_dir, index, wav_path, text, speaker_id):
 
     # Compute a mel-scale spectrogram from the trimmed wav:
     # (N, D)
-    mel_spectrogram = librosa.feature.melspectrogram(wav, sr=sr, n_fft=hparams.n_fft, hop_length=hparams.hop_size, n_mels=hparams.num_mels, fmin=hparams.fmin, fmax=hparams.fmax).T
+    mel_spectrogram = librosa.feature.melspectrogram(wav, 
+                                                     sr=sr, 
+                                                     n_fft=hparams.n_fft, 
+                                                     hop_length=hparams.hop_size, 
+                                                     n_mels=hparams.num_mels, 
+                                                     fmin=hparams.fmin, 
+                                                     fmax=hparams.fmax).T
 
     # mel_spectrogram = np.round(mel_spectrogram, decimals=2)
     mel_spectrogram = 20 * np.log10(np.maximum(1e-4, mel_spectrogram)) - hparams.ref_level_db
@@ -81,9 +88,9 @@ def _process_utterance(out_dir, index, wav_path, text, speaker_id):
     # Write the spectrograms to disk:
     audio_filename = 'dataset-audio-%05d.npy' % index
     mel_filename = 'dataset-mel-%05d.npy' % index
-    np.save(os.path.join(out_dir, audio_filename),
+    np.save(os.path.join(out_dir, 'audios', audio_filename),
             out.astype(out_dtype), allow_pickle=False)
-    np.save(os.path.join(out_dir, mel_filename),
+    np.save(os.path.join(out_dir, 'mels', mel_filename),
             mel_spectrogram.astype(np.float32), allow_pickle=False)
 
     # Return a tuple describing this training example:
@@ -92,6 +99,8 @@ def _process_utterance(out_dir, index, wav_path, text, speaker_id):
 
 def preprocess(in_dir, out_dir, num_workers):
     os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(os.path.join(out_dir, 'audios'), exist_ok=True)
+    os.makedirs(os.path.join(out_dir, 'mels'), exist_ok=True)
     metadata = build_from_path(in_dir, out_dir, num_workers)
     write_metadata(metadata, out_dir)
 
@@ -106,6 +115,10 @@ def write_metadata(metadata, out_dir):
     print('Max input length:  %d' % max(len(m[4]) for m in metadata))
     print('Max output length: %d' % max(m[2] for m in metadata))
 
+    print('Creating tfrecords...')
+    creator = TFRecordCreator(os.path.join(out_dir, 'train.txt'), hparams)
+    creator.create_tfrecords()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Preprocessing',
@@ -116,3 +129,4 @@ if __name__ == "__main__":
 
     num_workers = cpu_count()
     preprocess(args.in_dir, args.out_dir, num_workers)
+    

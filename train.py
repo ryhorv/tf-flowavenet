@@ -1,7 +1,7 @@
 import tensorflow as tf
 import os
 import time
-from dataset import Dataset
+from new_dataset import Dataset
 from model import FloWaveNet
 import utils
 from hparams import hparams
@@ -170,6 +170,8 @@ def train(log_dir, args, hparams, input_path):
 
     checkpoint_path = os.path.join(save_dir, 'flowavenet_model.ckpt')
     input_path = os.path.join(args.base_dir, input_path)
+    train_tfrecord = os.path.join(args.base_dir, 'training_data/train.tfrecord')
+    test_tfrecord = os.path.join(args.base_dir, 'training_data/test.tfrecord')
 
     print('Checkpoint_path: {}'.format(checkpoint_path))
     print('Loading training data from: {}'.format(input_path))
@@ -177,8 +179,8 @@ def train(log_dir, args, hparams, input_path):
     #Start by setting a seed for repeatability
     tf.set_random_seed(hparams.tf_random_seed)
 
-    with tf.name_scope('dataset') as scope:
-        dataset = Dataset(input_path, args.input_dir, hparams)
+    with tf.name_scope('dataset'):
+        dataset = Dataset(train_tfrecord, test_tfrecord, hparams)
 
     #Set up model
     init = tf.placeholder_with_default(False, shape=None, name='init')
@@ -189,7 +191,7 @@ def train(log_dir, args, hparams, input_path):
     is_training = tf.placeholder(tf.bool, name='is_training')
     
     train_summary_op, test_summary_op = get_summary_op(train_losses, test_losses, lr, grad_global_norm, is_training)
-    eval_summary_op = get_eval_summary_op(model, dataset, hparams, is_training)
+    # eval_summary_op = get_eval_summary_op(model, dataset, hparams, is_training)
 
     step = 0
     saver = tf.train.Saver(var_list=tf.global_variables())
@@ -255,12 +257,12 @@ def train(log_dir, args, hparams, input_path):
             if step % args.checkpoint_interval == 0 or step == args.train_steps:
                 saver.save(sess, checkpoint_path, global_step=global_step)
 
-            if step % args.eval_interval == 0:
-                print('\nEvaluating at step {}'.format(step))
-                train_writer.add_summary(sess.run(eval_summary_op, feed_dict={is_training: True}), step)
-                test_writer.add_summary(sess.run(eval_summary_op, feed_dict={is_training: False}), step)
-                train_writer.flush()
-                test_writer.flush()
+            # if step % args.eval_interval == 0:
+            #     print('\nEvaluating at step {}'.format(step))
+            #     train_writer.add_summary(sess.run(eval_summary_op, feed_dict={is_training: True}), step)
+            #     test_writer.add_summary(sess.run(eval_summary_op, feed_dict={is_training: False}), step)
+            #     train_writer.flush()
+            #     test_writer.flush()
 
         return save_dir
 
