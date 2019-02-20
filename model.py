@@ -143,6 +143,8 @@ class AffineCoupling:
 
                 if g is not None:
                     g_a, g_b = tf.split(g, axis=2, num_or_size_splits=2)
+                else:
+                    g_a = None
 
                 if self._affine:
                     log_s, t = tf.split(self._net(out_a, c_a, g_a), axis=2, num_or_size_splits=2)
@@ -348,7 +350,6 @@ class FloWaveNet:
                     g_embeddings = None
 
                 x = z
-
                 x_channels = 1
                 c_channels = self._cin_channels
                 g_channels = self._hparams.gin_channels
@@ -358,11 +359,11 @@ class FloWaveNet:
                     x = tf.reshape(x, [shape[0], shape[1] // 2, 2, x_channels])
                     x = tf.transpose(x, [0, 1, 3, 2])
                     x = tf.reshape(x, [shape[0], shape[1] // 2, 2 * x_channels])
-
+                    
                     c = tf.reshape(c, [shape[0], shape[1] // 2, 2, c_channels])
                     c = tf.transpose(c, [0, 1, 3, 2])
                     c = tf.reshape(c, [shape[0], shape[1]  // 2, 2 * c_channels])
-
+                    
                     if g_embeddings is not None:
                         g_embeddings = tf.reshape(g_embeddings, [shape[0], shape[1] // 2, 2, g_channels])
                         g_embeddings = tf.transpose(g_embeddings, [0, 1, 3, 2])

@@ -4,7 +4,7 @@ import numpy as np
 
 # Default hyperparameters
 hparams = tf.contrib.training.HParams(
-    num_gpus = 1, #Determines the number of gpus in use
+    num_gpus = 2, #Determines the number of gpus in use
     ps_device_type = 'GPU', # 'CPU'/'GPU'  Where gradients will sync
 
     #Audio
@@ -19,7 +19,7 @@ hparams = tf.contrib.training.HParams(
     #Limits
     min_level_db = -100,
     ref_level_db = 20,
-    fmin = 75, #Set this to 75 if your speaker is male! if female, 125 should help taking off noise. (To test depending on dataset)
+    fmin = 125, #Set this to 75 if your speaker is male! if female, 125 should help taking off noise. (To test depending on dataset)
     fmax = 7600,
     
     max_time_steps = 6400,
@@ -30,7 +30,7 @@ hparams = tf.contrib.training.HParams(
     split_random_state = 123,
     shuffle_random_seed = 42,
     test_size = 10,
-    batch_size = 8,
+    batch_size = 4,
 
     gin_channels = -1,
     n_speakers = 7,
