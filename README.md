@@ -32,7 +32,7 @@ where `dataset` is a folder with LJ-Speech dataset.
 3. Run training: 
 ```
 >>> python3 train.py
-```.
+```
 
 ## Features
 
