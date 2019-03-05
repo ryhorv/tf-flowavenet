@@ -23,11 +23,16 @@ Unofficial tensorflow implementation of the paper ["FloWaveNet : A Generative Fl
 
 2. Preprocess dataset using the following command: 
 
-```python3 preprocessing.py --in_dir=dataset --out_dir=training_data```
+```
+>>> python3 preprocessing.py --in_dir=dataset --out_dir=training_data
+```
 
 where `dataset` is a folder with LJ-Speech dataset.
 
-3. Run training: `python3 train.py`.
+3. Run training: 
+```
+>>> python3 train.py
+```.
 
 ## Features
 
