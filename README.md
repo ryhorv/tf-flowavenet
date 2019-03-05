@@ -12,7 +12,14 @@ Unofficial tensorflow implementation of the paper ["FloWaveNet : A Generative Fl
 
 ## How to use
 
-1. Download the [LJ-Speech dataset](https://keithito.com/LJ-Speech-Dataset/) and unzip to a new folder in the current dir.
+1. Download the [LJ-Speech dataset](https://keithito.com/LJ-Speech-Dataset/) and unpack it:
+
+```
+>>> mkdir dataset 
+>>> mv LJSpeech-1.1.tar.bz2 dataset/
+>>> cd dataset/
+>>> tar -xvf LJSpeech-1.1.tar.bz2
+```
 
 2. Preprocess dataset using the following command: 
 
@@ -22,13 +29,14 @@ where `dataset` is a folder with LJ-Speech dataset.
 
 3. Run training: `python3 train.py`.
 
+## Features
+
+- Implemented Multig-gpu training
+- Added Global condition features
 
 ## Todo list
 
-- [x] Multi-gpu training
-- [x] Correct ActNorm initialization
-- [x] Synthesis mode
-- [ ] Global condition features
+- [ ] Mixed precision training
 
 
 ## Reference
