@@ -61,12 +61,13 @@ class ZeroConv1d:
 
 class ResBlock:
     def __init__(self, in_channels, out_channels, skip_channels, kernel_size, dilation,
-                 cin_channels=None, local_conditioning=True, causal=False, scope='ResBlock'):
+                 cin_channels=None, local_conditioning=True, global_conditioning=True, causal=False, scope='ResBlock'):
         with tf.variable_scope(scope) as vs:
             self._vs = vs
             self._scope = scope
             self._causal = causal
             self._local_conditioning = local_conditioning
+            self._global_conditioning = global_conditioning
             self._cin_channels = cin_channels
             self._skip = True if skip_channels is not None else False
 
@@ -85,16 +86,27 @@ class ResBlock:
 
             if self._local_conditioning:
                 self._filter_conv_c = Conv1D(filters=out_channels, 
-                                                       kernel_size=1, 
-                                                       kernel_initializer=tf.initializers.he_uniform(),
-                                                       bias_initializer=tf.initializers.he_uniform())
+                                             kernel_size=1, 
+                                             kernel_initializer=tf.initializers.he_uniform(),
+                                             bias_initializer=tf.initializers.he_uniform())
                 
                 self._gate_conv_c = Conv1D(filters=out_channels, 
-                                                     kernel_size=1,
-                                                     kernel_initializer=tf.initializers.he_uniform(),
-                                                     bias_initializer=tf.initializers.he_uniform())
+                                           kernel_size=1,
+                                           kernel_initializer=tf.initializers.he_uniform(),
+                                           bias_initializer=tf.initializers.he_uniform())
 
-    def forward(self, tensor, c=None):
+            if self._global_conditioning:
+                self._filter_conv_g = Conv1D(filters=out_channels, 
+                                             kernel_size=1, 
+                                             kernel_initializer=tf.initializers.he_uniform(),
+                                             bias_initializer=tf.initializers.he_uniform())
+                
+                self._gate_conv_g = Conv1D(filters=out_channels, 
+                                           kernel_size=1,
+                                           kernel_initializer=tf.initializers.he_uniform(),
+                                           bias_initializer=tf.initializers.he_uniform())
+
+    def forward(self, tensor, c, g=None):
         with tf.variable_scope(self._vs, auxiliary_name_scope=False) as vs1:
             with tf.name_scope(vs1.original_name_scope):
                 h_filter = self._filter_conv(tensor)
@@ -104,14 +116,18 @@ class ResBlock:
                     h_filter += self._filter_conv_c(c)
                     h_gate += self._gate_conv_c(c)
 
+                if self._global_conditioning and g is not None:
+                    h_filter += self._filter_conv_g(g)
+                    h_gate += self._gate_conv_g(g)
+
                 out = tf.tanh(h_filter) * tf.sigmoid(h_gate)
 
                 res = self._res_conv(out)
                 skip = self._skip_conv(out) if self._skip else None
                 return (tensor + res) * tf.sqrt(0.5), skip
 
-    def __call__(self, tensor, c=None):
-        return self.forward(tensor, c)
+    def __call__(self, tensor, c, g=None):
+        return self.forward(tensor, c, g)
 
 
 class WaveNet:
@@ -133,7 +149,7 @@ class WaveNet:
                 for n in range(num_layers):
                     self._res_blocks.append(ResBlock(residual_channels, gate_channels, skip_channels,
                                                      kernel_size, dilation=kernel_size ** n,
-                                                     cin_channels=cin_channels, local_conditioning=True,
+                                                     cin_channels=cin_channels, local_conditioning=True, global_conditioning=True,
                                                      causal=causal, scope='ResBlock_%d_%d' % (b, n)))
 
             last_channels = skip_channels if self._skip else residual_channels
@@ -141,7 +157,7 @@ class WaveNet:
             self._final_conv = Conv(last_channels, last_channels, 1, causal=causal, scope='Conv_final')
             self._final_zero_conv = ZeroConv1d(last_channels, out_channels)
 
-    def forward(self, x, c=None):
+    def forward(self, x, c, g=None):
         with tf.variable_scope(self._vs, auxiliary_name_scope=False) as vs1:
             with tf.name_scope(vs1.original_name_scope):
                 h = self._front_conv(x)
@@ -150,10 +166,10 @@ class WaveNet:
                 skip = []
                 for i, f in enumerate(self._res_blocks):
                     if self._skip:
-                        h, s = f(h, c)
+                        h, s = f(h, c, g)
                         skip.append(s)
                     else:
-                        h, _ = f(h, c)
+                        h, _ = f(h, c, g)
 
                 if self._skip:
                     out = tf.add_n(skip)
@@ -168,7 +184,7 @@ class WaveNet:
                     out = self._final_zero_conv(out)
                 return out
 
-    def __call__(self, x, c=None):
+    def __call__(self, x, c, g=None):
         return self.forward(x, c)
 
 

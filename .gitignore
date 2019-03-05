@@ -2,3 +2,6 @@
 .ipynb_checkpoints/
 logdir/
 .vscode
+training_data/
+__pycache__/
+speakers.txt

@@ -1,9 +1,11 @@
-import tensorflow as tf
 import os
+# os.environ["KMP_BLOCKTIME"] = "0"
+# os.environ["KMP_AFFINITY"] = "granularity=fine,verbose,compact,1,0"
+
+import tensorflow as tf
 import time
 from dataset import Dataset
 from model import FloWaveNet
-import utils
 from hparams import hparams
 import argparse
 import numpy as np
@@ -19,28 +21,42 @@ def get_optimizer(hparams, global_step):
         optimizer = tf.train.AdamOptimizer(learning_rate)
         return optimizer, learning_rate
     
+def average_gradients(tower_grads):
+    with tf.name_scope('grad_avg'):
+        average_grads = []
+        for grad_and_vars in zip(*tower_grads):
+            # Note that each grad_and_vars looks like the following:
+            #   ((grad0_gpu0, var0_gpu0), ... , (grad0_gpuN, var0_gpuN))
+            grads = []
+            for g, _ in grad_and_vars:
+                # Add 0 dimension to the gradients to represent the tower.
+                if g is not None:
+                    expanded_g = tf.expand_dims(g, 0)
+
+                    # Append on a 'tower' dimension which we will average over below.
+                    grads.append(expanded_g)
+
+            if len(grads) > 0:
+                # Average over the 'tower' dimension.
+                grad = tf.concat(axis=0, values=grads)
+                grad = tf.reduce_mean(grad, 0)
+
+                # Keep in mind that the Variables are redundant because they are shared
+                # across towers. So .. we will just return the first tower's pointer to
+                # the Variable.
+                v = grad_and_vars[0][1]
+                grad_and_var = (grad, v)
+                average_grads.append(grad_and_var)
+        return average_grads
     
-def compute_gradients(loss, vars):
-    with tf.name_scope('gradients'):
-        grads = tf.gradients(loss, vars)
-
-        # Gradient clipping from the original FloWaveNet model
-        with tf.name_scope('gradient_clipping'):                   
-            clipped_grads, global_norm = tf.clip_by_global_norm(grads, 1)
-            grad_vars = list(zip(clipped_grads, vars))        
-            return grad_vars, global_norm
-
-        # Gradient clipping from the ClariNet model
-        # with tf.name_scope('gradient_clipping'):                   
-        #     clipped_grads_by_norm, global_norm = tf.clip_by_global_norm(grads, 100)
-        #     clipped_grads = []
-        #     for grad in clipped_grads_by_norm:
-        #         clipped_grad = tf.clip_by_value(grad, -5, 5) if grad is not None else None
-        #         clipped_grads.append(clipped_grad)
-
-        #     grad_vars = list(zip(clipped_grads, vars))        
-        #     return grad_vars, global_norm
-
+        
+def clip_gradients(grad_vars):
+    with tf.name_scope('gradient_clipping'):      
+        grads, variables = zip(*grad_vars)
+        clipped_grads, global_norm = tf.clip_by_global_norm(grads, 1)
+        grad_vars = list(zip(clipped_grads, variables))        
+        return grad_vars, global_norm
+    
 
 def build_model(dataset, hparams, global_step, init):
     tower_gradvars = []
@@ -48,19 +64,15 @@ def build_model(dataset, hparams, global_step, init):
     train_losses = []
     train_predictd_wavs = None
     train_target_wavs = None
-    grad_global_norm = None
     
     consolidation_device  = '/cpu:0' if hparams.ps_device_type == 'CPU' and hparams.num_gpus > 1 else '/gpu:0'
     for i in range(hparams.num_gpus):
         if hparams.num_gpus > 1:
             worker_device = '/gpu:%d' % i
             if hparams.ps_device_type == 'CPU':
-                device_setter = utils.local_device_setter(worker_device=worker_device)
+                device_setter = tf.train.replica_device_setter(ps_tasks=1, worker_device=worker_device, ps_device="/cpu:0")
             elif hparams.ps_device_type == 'GPU':
-                device_setter = utils.local_device_setter(
-                    ps_device_type='gpu',
-                    worker_device=worker_device,
-                    ps_strategy=None)
+                device_setter = tf.train.replica_device_setter(ps_tasks=1, worker_device=worker_device, ps_device="/gpu:0")
         else:
             device_setter = '/gpu:0'
 
@@ -68,33 +80,36 @@ def build_model(dataset, hparams, global_step, init):
             with tf.name_scope('tower_%d' % i) as name_scope:
                 with tf.device(device_setter):
                     model = FloWaveNet(hparams, init=init)
-
-                    log_p, logdet = model.forward(dataset.inputs[i], dataset.local_conditions[i])
+                    log_p, logdet = model.forward(dataset.inputs[i], dataset.local_conditions[i], dataset.speaker_ids[i])
                     
                     with tf.name_scope('loss'):
                         loss = -(log_p + logdet)
-
-                    grad_vars, global_norm = compute_gradients(loss, tf.trainable_variables())
-                    tower_gradvars.append(grad_vars)
+                        
+                    with tf.name_scope('gradients'):
+                        variables = tf.trainable_variables()
+                        grads = tf.gradients(loss, variables)
+                        grad_vars = list(zip(grads, variables)) 
+                        tower_gradvars.append(grad_vars)
+                   
 
                     if i == 0:
                         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, name_scope)
                         train_model = model
                         train_losses = [loss, log_p, logdet]
-                        grad_global_norm = global_norm
 
     
     with tf.device(consolidation_device):
-        grad_vars = utils.average_gradients(tower_gradvars)
-        optimizer, lr = get_optimizer(hparams, global_step)
-            
+        grad_vars = average_gradients(tower_gradvars)
+        clipped_grad_vars, grad_global_norm = clip_gradients(grad_vars)
+        
+        optimizer, lr = get_optimizer(hparams, global_step)    
         with tf.control_dependencies(update_ops):
-            train_op = optimizer.apply_gradients(grad_vars, global_step=global_step)
+            train_op = optimizer.apply_gradients(clipped_grad_vars, global_step=global_step)
 
     return train_op, train_model, train_losses, lr, grad_global_norm
 
 def get_test_losses(model, dataset, hparams):
-    log_p, logdet = model.forward(dataset.eval_inputs, dataset.eval_local_conditions)
+    log_p, logdet = model.forward(dataset.eval_inputs, dataset.eval_local_conditions, dataset.eval_speaker_ids)
     with tf.name_scope('loss'):
         loss = -(log_p + logdet)                
     
@@ -126,33 +141,36 @@ def get_summary_op(train_losses, test_losses, learning_rate, grad_global_norm, i
 
     return train_op, test_op
 
-def get_eval_summary_op(model, dataset, hparams, is_training):
-    def get_audio(model, batch, hparams):
-        lc = tf.constant(batch[1], dtype=tf.float32)
-        z = tf.random_normal(batch[0].shape) * hparams.temp
+def predict_random_samples(model, metadata_path, hparams):
+    basedir = os.path.dirname(metadata_path)
+    with open(metadata_path, 'rt', encoding='utf-8') as f:
+        meta = f.read().strip().split('\n')
+        meta = [m.split('|') for m in meta]
+            
+    max_time_frames = int(hparams.eval_max_time_steps // hparams.hop_size)
+    random_index = np.random.choice(len(meta))
+    sample = meta[random_index]
+    wav = np.load(os.path.join(basedir, 'audios', sample[0]))[:max_time_frames*hparams.hop_size]
+    lc = np.load(os.path.join(basedir, 'mels', sample[1]))[:max_time_frames]
         
-        predicted_wavs = model.reverse(z, lc)
-        predicted_wavs = tf.squeeze(predicted_wavs, axis=-1)
+    target_wavs = tf.convert_to_tensor(wav[np.newaxis, :, np.newaxis], dtype=tf.float32)
+    lc = tf.convert_to_tensor(lc[np.newaxis, ...], dtype=tf.float32)
         
-        target_wavs = tf.squeeze(tf.constant(batch[0], dtype=tf.float32), axis=-1)        
-        return predicted_wavs, target_wavs
-    
-    audio_filenames, mel_filenames, _, _ = zip(*dataset._train_meta[:hparams.eval_samples])
-    train_batch = dataset._py_load_batch([a.encode() for a in audio_filenames], [m.encode() for m in mel_filenames], hparams.eval_max_time_steps)
+    z = tf.random_normal(target_wavs.shape) * hparams.temp
+    speaker_ids = tf.constant(int(sample[3]), dtype=tf.int32)
+        
+    predicted_wavs = model.reverse(z, lc, speaker_ids)
+    predicted_wavs = tf.squeeze(predicted_wavs, axis=-1)
+        
+    target_wavs = tf.squeeze(target_wavs, axis=-1)        
+    return predicted_wavs, target_wavs
 
-    audio_filenames, mel_filenames, _, _ = zip(*dataset._test_meta[:hparams.eval_samples])
-    test_batch = dataset._py_load_batch([a.encode() for a in audio_filenames], [m.encode() for m in mel_filenames], hparams.eval_max_time_steps)
-    
-    train_predicted_wavs, train_target_wavs = get_audio(model, train_batch, hparams)
-    test_predicted_wavs, test_target_wavs = get_audio(model, test_batch, hparams)
-    
-    predicted_wavs, target_wavs = tf.cond(is_training, 
-                                          true_fn=lambda: (train_predicted_wavs, train_target_wavs), 
-                                          false_fn=lambda: (test_predicted_wavs, test_target_wavs))
+def get_eval_summary_op(model, metadata_path, hparams):
+    predicted_wavs, target_wavs = predict_random_samples(model, metadata_path, hparams)
     
     summaries = []
-    summaries.append(tf.summary.audio('predictions', predicted_wavs, sample_rate=hparams.sample_rate, max_outputs=hparams.eval_samples))
-    summaries.append(tf.summary.audio('targets', target_wavs, sample_rate=hparams.sample_rate, max_outputs=hparams.eval_samples))
+    summaries.append(tf.summary.audio('predictions', predicted_wavs, sample_rate=hparams.sample_rate))
+    summaries.append(tf.summary.audio('targets', target_wavs, sample_rate=hparams.sample_rate))
 
     summary_op = tf.summary.merge(summaries)
     return summary_op
@@ -170,6 +188,9 @@ def train(log_dir, args, hparams, input_path):
 
     checkpoint_path = os.path.join(save_dir, 'flowavenet_model.ckpt')
     input_path = os.path.join(args.base_dir, input_path)
+    train_tfrecord = os.path.join(args.base_dir, 'training_data/train.tfrecord')
+    test_tfrecord = os.path.join(args.base_dir, 'training_data/test.tfrecord')
+    metadata_filename = os.path.join(args.base_dir, 'training_data/train.txt')
 
     print('Checkpoint_path: {}'.format(checkpoint_path))
     print('Loading training data from: {}'.format(input_path))
@@ -177,8 +198,8 @@ def train(log_dir, args, hparams, input_path):
     #Start by setting a seed for repeatability
     tf.set_random_seed(hparams.tf_random_seed)
 
-    with tf.name_scope('dataset') as scope:
-        dataset = Dataset(input_path, args.input_dir, hparams)
+    with tf.name_scope('dataset'):
+        dataset = Dataset(train_tfrecord, test_tfrecord, hparams)
 
     #Set up model
     init = tf.placeholder_with_default(False, shape=None, name='init')
@@ -189,7 +210,7 @@ def train(log_dir, args, hparams, input_path):
     is_training = tf.placeholder(tf.bool, name='is_training')
     
     train_summary_op, test_summary_op = get_summary_op(train_losses, test_losses, lr, grad_global_norm, is_training)
-    eval_summary_op = get_eval_summary_op(model, dataset, hparams, is_training)
+    eval_summary_op = get_eval_summary_op(model, metadata_filename, hparams)
 
     step = 0
     saver = tf.train.Saver(var_list=tf.global_variables())
@@ -199,6 +220,8 @@ def train(log_dir, args, hparams, input_path):
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
+    # config.intra_op_parallelism_threads = 14
+    # config.inter_op_parallelism_threads = 5
 
     #Train
     with tf.Session(config=config) as sess:
@@ -251,16 +274,13 @@ def train(log_dir, args, hparams, input_path):
                 train_writer.add_summary(sess.run(train_summary_op, feed_dict={is_training: True}), step)
                 test_writer.add_summary(sess.run(test_summary_op, feed_dict={is_training: False}), step)
                 
-
             if step % args.checkpoint_interval == 0 or step == args.train_steps:
                 saver.save(sess, checkpoint_path, global_step=global_step)
 
             if step % args.eval_interval == 0:
                 print('\nEvaluating at step {}'.format(step))
                 train_writer.add_summary(sess.run(eval_summary_op, feed_dict={is_training: True}), step)
-                test_writer.add_summary(sess.run(eval_summary_op, feed_dict={is_training: False}), step)
                 train_writer.flush()
-                test_writer.flush()
 
         return save_dir
 
