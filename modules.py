@@ -1,5 +1,6 @@
 import tensorflow as tf
 from convolutional import Conv1D
+from utils import fp16_dtype_getter
 
 
 class Conv:
@@ -36,7 +37,7 @@ class Conv:
 
 
 class ZeroConv1d:
-    def __init__(self, in_channel, out_channel, scope='ZeroConv1d'):
+    def __init__(self, in_channel, out_channel, scope='ZeroConv1d', training_dtype=tf.float32):
         with tf.variable_scope(scope) as vs:
             self._vs = vs
             self._conv = Conv1D(filters=out_channel, 
@@ -45,8 +46,7 @@ class ZeroConv1d:
                                           kernel_initializer=tf.initializers.zeros(), 
                                           bias_initializer=tf.initializers.zeros(), weight_norm=False)
                                 
-            self._scale = tf.get_variable('scale', shape=[1, 1, out_channel], initializer=tf.initializers.zeros())
-
+            self._scale = tf.get_variable('scale', shape=[1, 1, out_channel], initializer=tf.initializers.zeros(), dtype=training_dtype)
     
     def forward(self, x):
         with tf.variable_scope(self._vs, auxiliary_name_scope=False) as vs1:
@@ -61,7 +61,7 @@ class ZeroConv1d:
 
 class ResBlock:
     def __init__(self, in_channels, out_channels, skip_channels, kernel_size, dilation,
-                 cin_channels=None, local_conditioning=True, global_conditioning=True, causal=False, scope='ResBlock'):
+                 cin_channels=None, local_conditioning=True, global_conditioning=True, causal=False, scope='ResBlock', training_dtype=tf.float32):
         with tf.variable_scope(scope) as vs:
             self._vs = vs
             self._scope = scope
@@ -70,6 +70,7 @@ class ResBlock:
             self._global_conditioning = global_conditioning
             self._cin_channels = cin_channels
             self._skip = True if skip_channels is not None else False
+            self._training_dtype=training_dtype
 
             self._filter_conv = Conv(in_channels, out_channels, kernel_size, dilation, causal, scope='Conv_filter')
             self._gate_conv = Conv(in_channels, out_channels, kernel_size, dilation, causal, scope='Conv_gate')
@@ -124,7 +125,7 @@ class ResBlock:
 
                 res = self._res_conv(out)
                 skip = self._skip_conv(out) if self._skip else None
-                return (tensor + res) * tf.sqrt(0.5), skip
+                return (tensor + res) * tf.cast(tf.sqrt(0.5), dtype=self._training_dtype), skip
 
     def __call__(self, tensor, c, g=None):
         return self.forward(tensor, c, g)
@@ -133,7 +134,7 @@ class ResBlock:
 class WaveNet:
     def __init__(self, in_channels=1, out_channels=2, num_blocks=1, num_layers=6,
                  residual_channels=256, gate_channels=256, skip_channels=256,
-                 kernel_size=3, cin_channels=80, causal=True, scope='WaveNet'):
+                 kernel_size=3, cin_channels=80, causal=True, scope='WaveNet', training_dtype=tf.float32):
 
         with tf.variable_scope(scope) as vs:
             self._vs = vs
@@ -150,12 +151,12 @@ class WaveNet:
                     self._res_blocks.append(ResBlock(residual_channels, gate_channels, skip_channels,
                                                      kernel_size, dilation=kernel_size ** n,
                                                      cin_channels=cin_channels, local_conditioning=True, global_conditioning=True,
-                                                     causal=causal, scope='ResBlock_%d_%d' % (b, n)))
+                                                     causal=causal, scope='ResBlock_%d_%d' % (b, n), training_dtype=training_dtype))
 
             last_channels = skip_channels if self._skip else residual_channels
 
             self._final_conv = Conv(last_channels, last_channels, 1, causal=causal, scope='Conv_final')
-            self._final_zero_conv = ZeroConv1d(last_channels, out_channels)
+            self._final_zero_conv = ZeroConv1d(last_channels, out_channels, training_dtype=training_dtype)
 
     def forward(self, x, c, g=None):
         with tf.variable_scope(self._vs, auxiliary_name_scope=False) as vs1:

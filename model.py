@@ -9,7 +9,7 @@ class ActNorm:
     This layer is implemented based on the implementation from the tensor2tensor library 
     https://github.com/tensorflow/tensor2tensor/blob/master/tensor2tensor/models/research/glow_ops_test.py
     """
-    def __init__(self, in_channel, logdet=True, init=False, logscale=3., scope='ActNorm'):
+    def __init__(self, in_channel, logdet=True, init=False, logscale=3., scope='ActNorm', training_dtype=tf.float32):
         with tf.variable_scope(scope) as vs:
             self._vs = vs
             self._scope = scope
@@ -17,8 +17,12 @@ class ActNorm:
             self._in_channel = in_channel
             self._init = init
             self._logdet = logdet
+            self._training_dtype = training_dtype
         
     def assign(self, w, initial_value):
+        if initial_value.dtype != w.dtype:
+            initial_value = tf.cast(initial_value, dtype=w.dtype)
+
         w = w.assign(initial_value)
         with tf.control_dependencies([w]):
             return w
@@ -29,10 +33,12 @@ class ActNorm:
         w = tf.get_variable(name, shape=shape, dtype=dtype, initializer=None, trainable=trainable)
         if isinstance(init, bool):
             if init:
-                return self.assign(w, initial_value)
-            return w
+                result = self.assign(w, initial_value)
+            result = w
         else:
-            return tf.cond(init, lambda: self.assign(w, initial_value), lambda: w)
+            result = tf.cond(init, lambda: self.assign(w, initial_value), lambda: w)
+
+        return tf.cast(result, dtype=self._training_dtype) if result.dtype != self._training_dtype else result
         
     def actnorm_center(self, x, reverse=False, init=False):
         """Add a bias to x.
@@ -48,7 +54,6 @@ class ActNorm:
       """
         x_mean = tf.reduce_mean(x, axis=[0, 1], keepdims=True)
         b = self.get_variable_ddi('b', [1, 1, self._in_channel], initial_value=-x_mean, init=init)
-        
         if not reverse:
             x += b
         else:
@@ -61,7 +66,7 @@ class ActNorm:
         logdet_factor = 1
         var_shape = (1, 1, self._in_channel)
         
-        init_value = tf.log(1.0 / (tf.sqrt(x_var) + 1e-6)) / logscale_factor
+        init_value = tf.log(1.0 / (tf.sqrt(x_var) + 1e-7)) / logscale_factor
         logs = self.get_variable_ddi('logs', var_shape, initial_value=init_value, init=init)
         logs = logs * logscale_factor
 
@@ -101,7 +106,7 @@ class ActNorm:
 
 
 class AffineCoupling:
-    def __init__(self, in_channel, cin_channel, filter_size=256, num_layer=6, affine=True, causal=False, scope='AffineCoupling'):
+    def __init__(self, in_channel, cin_channel, filter_size=256, num_layer=6, affine=True, causal=False, scope='AffineCoupling', training_dtype=tf.float32):
         with tf.variable_scope(scope) as vs:
             self._vs = vs
             self._scope = scope
@@ -110,7 +115,7 @@ class AffineCoupling:
             self._net = WaveNet(in_channels=in_channel // 2, out_channels=in_channel if self._affine else in_channel // 2,
                             num_blocks=1, num_layers=num_layer, residual_channels=filter_size,
                             gate_channels=filter_size, skip_channels=filter_size,
-                            kernel_size=3, cin_channels=cin_channel // 2, causal=causal)
+                            kernel_size=3, cin_channels=cin_channel // 2, causal=causal, training_dtype=training_dtype)
                             
 
     def forward(self, x, c, g=None):
@@ -169,13 +174,13 @@ def change_order(x, c, g=None):
     return tf.concat([x_b, x_a], 2), tf.concat([c_b, c_a], 2), None
 
 class Flow:
-    def __init__(self, in_channel, cin_channel, filter_size, num_layer, init, affine=True, causal=False, scope='Flow'):
+    def __init__(self, in_channel, cin_channel, filter_size, num_layer, init, affine=True, causal=False, scope='Flow', training_dtype=tf.float32):
         with tf.variable_scope(scope) as vs:
             self._vs = vs
             self._scope = scope
-            self._actnorm = ActNorm(in_channel, init=init)
+            self._actnorm = ActNorm(in_channel, init=init, training_dtype=training_dtype)
             self._coupling = AffineCoupling(in_channel, cin_channel, filter_size=filter_size,
-                                       num_layer=num_layer, affine=affine, causal=causal)
+                                       num_layer=num_layer, affine=affine, causal=causal, training_dtype=training_dtype)
 
     def forward(self, x, c, g=None):
         with tf.variable_scope(self._vs, auxiliary_name_scope=False) as vs1:
@@ -200,7 +205,7 @@ class Flow:
         return self.forward(x, c, g)
 
 class Block:
-    def __init__(self, in_channel, cin_channel, n_flow, n_layer, init, affine=True, causal=False, scope='Block'):
+    def __init__(self, in_channel, cin_channel, n_flow, n_layer, init, affine=True, causal=False, scope='Block', training_dtype=tf.float32):
         with tf.variable_scope(scope) as vs:
             self._vs = vs
             self._scope = scope
@@ -210,7 +215,7 @@ class Block:
             self._flows = []
             for i in range(n_flow):
                 self._flows.append(Flow(squeeze_dim, squeeze_dim_c, init=init, filter_size=256, num_layer=n_layer, affine=affine,
-                                    causal=causal, scope='Flow_%d' % i))
+                                    causal=causal, scope='Flow_%d' % i, training_dtype=training_dtype))
                 
 
     def forward(self, x, c, g=None):
@@ -283,12 +288,13 @@ class FloWaveNet:
             self._n_block = hparams.n_block
             self._cin_channels = hparams.num_mels
             self._hparams = hparams
+            self._dtype = hparams.dtype
 
             in_channels = 1
             cin_channels = self._cin_channels
             for i in range(self._n_block):
                 self._blocks.append(Block(in_channels, cin_channels, hparams.n_flow, hparams.n_layer, init=init, affine=hparams.affine,
-                                        causal=hparams.causality, scope='Block_%d' % i))
+                                        causal=hparams.causality, scope='Block_%d' % i, training_dtype=self._dtype))
                 in_channels *= 2
                 cin_channels *= 2
 
@@ -313,6 +319,9 @@ class FloWaveNet:
             with tf.name_scope(vs1.original_name_scope):
                 if g is None and self._hparams.gin_channels > 0:
                     raise ValueError('g is None')
+                    
+                x = tf.cast(x, dtype=self._dtype) if x.dtype != self._dtype else x
+                c = tf.cast(c, dtype=self._dtype) if c.dtype != self._dtype else c
 
                 logdet = []
                 out = x
@@ -320,6 +329,7 @@ class FloWaveNet:
 
                 if g is not None and self._hparams.gin_channels > 0:
                     g_embeddings = tf.nn.embedding_lookup(self.speaker_embeddings, g)
+                    g_embeddings = tf.cast(g_embeddings, dtype=self._dtype) if g_embeddings.dtype != self._dtype else g_embeddings
                     g_embeddings = tf.expand_dims(g_embeddings, axis=1)
                     g_embeddings = tf.tile(g_embeddings, (1, tf.shape(c)[1], 1))
                 else:
@@ -331,6 +341,9 @@ class FloWaveNet:
 
                 logdet = tf.add_n(logdet)
                 log_p = tf.reduce_mean(0.5 * (- log(2.0 * pi) - tf.pow(out, 2)))
+                
+                logdet = tf.cast(logdet, dtype=tf.float32)
+                log_p = tf.cast(log_p, dtype=tf.float32)
                 return log_p, logdet
 
             
@@ -340,10 +353,14 @@ class FloWaveNet:
                 if g is None and self._hparams.gin_channels > 0:
                     raise ValueError('g is None')
 
+                z = tf.cast(z, dtype=self._dtype) if z.dtype != self._dtype else z
+                c = tf.cast(c, dtype=self._dtype) if c.dtype != self._dtype else c
+
                 c = self.upsample(c)
 
                 if g is not None and self._hparams.gin_channels > 0:
                     g_embeddings = tf.nn.embedding_lookup(self.speaker_embeddings, g)
+                    g_embeddings = tf.cast(g_embeddings, dtype=self._dtype) if g_embeddings.dtype != self._dtype else g_embeddings
                     g_embeddings = tf.expand_dims(g_embeddings, axis=1)
                     g_embeddings = tf.tile(g_embeddings, (1, tf.shape(c)[1], 1))
                 else:
