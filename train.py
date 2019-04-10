@@ -232,17 +232,15 @@ def train(log_dir, args, hparams, input_path):
         
         # Training loop
         while step < args.train_steps:
-            start_time = time.time()
-            # try:
-            step, total_loss, log_p_loss, logdet_loss, opt = sess.run([global_step, train_losses[0], train_losses[1], train_losses[2], train_op])
-            # except tf.errors.InvalidArgumentError as e:
-                # print(e)
-                # print('Continue training')
-
-            step_duration = (time.time() - start_time)
-
-            message = 'Step {:7d} [{:.3f} sec/step, loss={:.5f}, log_p={:.5f}, logdet={:.5f}]'.format(step, step_duration, total_loss, log_p_loss, logdet_loss)
-            print(message, end='\r')
+            try:
+                start_time = time.time()
+                step, total_loss, log_p_loss, logdet_loss, opt = sess.run([global_step, train_losses[0], train_losses[1], train_losses[2], train_op])
+                step_duration = (time.time() - start_time)
+                message = 'Step {:7d} [{:.3f} sec/step, loss={:.5f}, log_p={:.5f}, logdet={:.5f}]'.format(step, step_duration, total_loss, log_p_loss, logdet_loss)
+                print(message, end='\r')
+            except tf.errors.InvalidArgumentError as e:
+                print(e)
+                print('Continue training')
                                     
             if total_loss > 500:
                 print('\nLoss is exploded')

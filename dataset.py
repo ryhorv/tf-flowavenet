@@ -24,7 +24,7 @@ class Dataset:
 #             dataset = dataset.apply(tf.data.experimental.shuffle_and_repeat(buffer_size))
             dataset = dataset.repeat()
             dataset = dataset.map(self._load_sample, n_cpu)
-            dataset = dataset.apply(tf.contrib.data.ignore_errors())
+            dataset = dataset.apply(tf.data.experimental.ignore_errors())
             dataset = dataset.batch(self._hparams.batch_size)
             dataset = dataset.prefetch(self._hparams.num_gpus)
 
