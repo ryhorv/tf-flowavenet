@@ -4,32 +4,27 @@ import os
 from sklearn.model_selection import train_test_split
 import multiprocessing
 
-_buffer_size = 500
-_pad = 0
 
 class Dataset:
     def __init__(self,  train_tfrecord, test_tfrecord, hparams):
         self._hparams = hparams
         self._train_tfrecord = train_tfrecord
-        self._test_tfrecord = test_tfrecord
-        
+        self._test_tfrecord = test_tfrecord      
         
         self._max_time_frames = self._hparams.max_time_steps // self._hparams.hop_size
         self._max_time_steps = self._max_time_frames * self._hparams.hop_size
         
-        #pad input sequences with the <pad_token> 0 ( _ )
-        self._pad = 0.
-        #explicitely setting the padding to a value that doesn't originally exist in the spectogram
-        #to avoid any possible conflicts, without affecting the output range of the model too much
-        
-        n_cpu = multiprocessing.cpu_count() // 2
+        self._pad = 0.    
+        n_cpu = multiprocessing.cpu_count()
         buffer_size = 64
 
         with tf.device('/cpu:0'):
             self._filenames = tf.placeholder(tf.string, shape=[None])
             dataset = tf.data.TFRecordDataset(self._filenames)
-            dataset = dataset.apply(tf.data.experimental.shuffle_and_repeat(buffer_size))
-            dataset = dataset.map(self._load_sample, buffer_size)
+#             dataset = dataset.apply(tf.data.experimental.shuffle_and_repeat(buffer_size))
+            dataset = dataset.repeat()
+            dataset = dataset.map(self._load_sample, n_cpu)
+            dataset = dataset.apply(tf.data.experimental.ignore_errors())
             dataset = dataset.batch(self._hparams.batch_size)
             dataset = dataset.prefetch(self._hparams.num_gpus)
 
@@ -83,6 +78,10 @@ class Dataset:
         
         audio.set_shape([None, 1])
         mel.set_shape([None, self._hparams.num_mels])
+        
+        if self._hparams.dtype == tf.float16:
+            audio = tf.cast(audio, tf.float16)
+            mel = tf.cast(mel, tf.float16)
 
         return mel, audio, speaker_id
 

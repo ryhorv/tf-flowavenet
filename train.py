@@ -9,8 +9,9 @@ from model import FloWaveNet
 from hparams import hparams
 import argparse
 import numpy as np
-
-
+from utils import fp16_dtype_getter, average_gradients
+  
+    
 def get_optimizer(hparams, global_step):
     with tf.name_scope('optimizer'):
         learning_rate = tf.constant(0.001)
@@ -19,36 +20,9 @@ def get_optimizer(hparams, global_step):
         learning_rate = tf.cond(tf.less(global_step, 600000), true_fn=lambda: learning_rate, false_fn=lambda: tf.constant(0.001 / 6))
 
         optimizer = tf.train.AdamOptimizer(learning_rate)
+        
         return optimizer, learning_rate
-    
-def average_gradients(tower_grads):
-    with tf.name_scope('grad_avg'):
-        average_grads = []
-        for grad_and_vars in zip(*tower_grads):
-            # Note that each grad_and_vars looks like the following:
-            #   ((grad0_gpu0, var0_gpu0), ... , (grad0_gpuN, var0_gpuN))
-            grads = []
-            for g, _ in grad_and_vars:
-                # Add 0 dimension to the gradients to represent the tower.
-                if g is not None:
-                    expanded_g = tf.expand_dims(g, 0)
-
-                    # Append on a 'tower' dimension which we will average over below.
-                    grads.append(expanded_g)
-
-            if len(grads) > 0:
-                # Average over the 'tower' dimension.
-                grad = tf.concat(axis=0, values=grads)
-                grad = tf.reduce_mean(grad, 0)
-
-                # Keep in mind that the Variables are redundant because they are shared
-                # across towers. So .. we will just return the first tower's pointer to
-                # the Variable.
-                v = grad_and_vars[0][1]
-                grad_and_var = (grad, v)
-                average_grads.append(grad_and_var)
-        return average_grads
-    
+        
         
 def clip_gradients(grad_vars):
     with tf.name_scope('gradient_clipping'):      
@@ -76,7 +50,7 @@ def build_model(dataset, hparams, global_step, init):
         else:
             device_setter = '/gpu:0'
 
-        with tf.variable_scope('vocoder', reuse=tf.AUTO_REUSE):  
+        with tf.variable_scope('vocoder', reuse=tf.AUTO_REUSE, custom_getter=fp16_dtype_getter):  
             with tf.name_scope('tower_%d' % i) as name_scope:
                 with tf.device(device_setter):
                     model = FloWaveNet(hparams, init=init)
@@ -87,11 +61,11 @@ def build_model(dataset, hparams, global_step, init):
                         
                     with tf.name_scope('gradients'):
                         variables = tf.trainable_variables()
-                        grads = tf.gradients(loss, variables)
+                        scaled_loss = tf.scalar_mul(hparams.scale, loss)
+                        grads = tf.gradients(scaled_loss, variables)
                         grad_vars = list(zip(grads, variables)) 
                         tower_gradvars.append(grad_vars)
                    
-
                     if i == 0:
                         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, name_scope)
                         train_model = model
@@ -100,8 +74,8 @@ def build_model(dataset, hparams, global_step, init):
     
     with tf.device(consolidation_device):
         grad_vars = average_gradients(tower_gradvars)
+        grad_vars = [(tf.scalar_mul(1./hparams.scale, g), v) for g, v in grad_vars if g is not None]
         clipped_grad_vars, grad_global_norm = clip_gradients(grad_vars)
-        
         optimizer, lr = get_optimizer(hparams, global_step)    
         with tf.control_dependencies(update_ops):
             train_op = optimizer.apply_gradients(clipped_grad_vars, global_step=global_step)
@@ -169,8 +143,8 @@ def get_eval_summary_op(model, metadata_path, hparams):
     predicted_wavs, target_wavs = predict_random_samples(model, metadata_path, hparams)
     
     summaries = []
-    summaries.append(tf.summary.audio('predictions', predicted_wavs, sample_rate=hparams.sample_rate))
-    summaries.append(tf.summary.audio('targets', target_wavs, sample_rate=hparams.sample_rate))
+    summaries.append(tf.summary.audio('predictions', tf.cast(predicted_wavs, tf.float32), sample_rate=hparams.sample_rate))
+    summaries.append(tf.summary.audio('targets', tf.cast(target_wavs, tf.float32), sample_rate=hparams.sample_rate))
 
     summary_op = tf.summary.merge(summaries)
     return summary_op
@@ -221,7 +195,7 @@ def train(log_dir, args, hparams, input_path):
     config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
     # config.intra_op_parallelism_threads = 14
-    # config.inter_op_parallelism_threads = 5
+    # config.inter_op_parallelism_threads = 4
 
     #Train
     with tf.Session(config=config) as sess:
@@ -258,12 +232,15 @@ def train(log_dir, args, hparams, input_path):
         
         # Training loop
         while step < args.train_steps:
-            start_time = time.time()
-            step, total_loss, log_p_loss, logdet_loss, opt = sess.run([global_step, train_losses[0], train_losses[1], train_losses[2], train_op])
-            step_duration = (time.time() - start_time)
-
-            message = 'Step {:7d} [{:.3f} sec/step, loss={:.5f}, log_p={:.5f}, logdet={:.5f}]'.format(step, step_duration, total_loss, log_p_loss, logdet_loss)
-            print(message, end='\r')
+            try:
+                start_time = time.time()
+                step, total_loss, log_p_loss, logdet_loss, opt = sess.run([global_step, train_losses[0], train_losses[1], train_losses[2], train_op])
+                step_duration = (time.time() - start_time)
+                message = 'Step {:7d} [{:.3f} sec/step, loss={:.5f}, log_p={:.5f}, logdet={:.5f}]'.format(step, step_duration, total_loss, log_p_loss, logdet_loss)
+                print(message, end='\r')
+            except tf.errors.InvalidArgumentError as e:
+                print(e)
+                print('Continue training')
                                     
             if total_loss > 500:
                 print('\nLoss is exploded')
