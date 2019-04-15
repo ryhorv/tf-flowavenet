@@ -21,10 +21,9 @@ class Dataset:
         with tf.device('/cpu:0'):
             self._filenames = tf.placeholder(tf.string, shape=[None])
             dataset = tf.data.TFRecordDataset(self._filenames)
-#             dataset = dataset.apply(tf.data.experimental.shuffle_and_repeat(buffer_size))
-            dataset = dataset.repeat()
+            dataset = dataset.apply(tf.data.experimental.shuffle_and_repeat(buffer_size))
             dataset = dataset.map(self._load_sample, n_cpu)
-            dataset = dataset.apply(tf.data.experimental.ignore_errors())
+            # dataset = dataset.apply(tf.data.experimental.ignore_errors())
             dataset = dataset.batch(self._hparams.batch_size)
             dataset = dataset.prefetch(self._hparams.num_gpus)
 
