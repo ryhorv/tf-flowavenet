@@ -15,19 +15,14 @@ Unofficial tensorflow implementation of the paper ["FloWaveNet : A Generative Fl
 1. Download the [LJ-Speech dataset](https://keithito.com/LJ-Speech-Dataset/) and unpack it:
 
 ```
->>> mkdir dataset 
->>> mv LJSpeech-1.1.tar.bz2 dataset/
->>> cd dataset/
 >>> tar -xvf LJSpeech-1.1.tar.bz2
 ```
 
 2. Preprocess dataset using the following command: 
 
 ```
->>> python3 preprocessing.py --in_dir=dataset --out_dir=training_data
+>>> python3 preprocessing.py --in_dir=LJSpeech-1.1 --out_dir=training_data
 ```
-
-where `dataset` is a folder with LJ-Speech dataset.
 
 3. Run training: 
 ```
@@ -38,10 +33,15 @@ where `dataset` is a folder with LJ-Speech dataset.
 
 - Implemented Multig-gpu training
 - Added Global condition features
+- Mixed precision training
+
+With mixed precision training (enabled by default) the model can be trained for 7.5 days on a single GPU with 11Gb RAM. To use float32 training set `dtype=tf.float32` and `scale=1.` in `hparams.py`.
+
+Several examples of synthesis can be found [here](examples).
 
 ## Todo list
 
-- [ ] Mixed precision training
+- [ ] Learning rate and batch size tuning for efficient multi-GPU training
 
 
 ## Reference
