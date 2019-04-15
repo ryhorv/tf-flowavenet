@@ -242,9 +242,6 @@ def train(log_dir, args, hparams, input_path):
                 print(e)
                 print('Continue training')
                                     
-            if total_loss > 500:
-                print('\nLoss is exploded')
-                return
 
             if step % args.summary_interval == 0:
                 print('\nWriting summary at step {}'.format(step))
