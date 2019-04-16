@@ -337,13 +337,13 @@ class FloWaveNet:
                     
                 for block in self._blocks:
                     out, c, g_embeddings, logdet_new = block(out, c, g_embeddings)
-                    logdet.append(logdet_new)
+                    logdet.append(tf.cast(logdet_new, dtype=tf.float32))
 
                 logdet = tf.add_n(logdet)
-                log_p = tf.reduce_mean(0.5 * (- log(2.0 * pi) - tf.pow(out, 2)))
+                log_p = tf.reduce_mean(0.5 * (- log(2.0 * pi) - tf.pow(tf.cast(out, dtype=tf.float32), 2)))
                 
-                logdet = tf.cast(logdet, dtype=tf.float32)
-                log_p = tf.cast(log_p, dtype=tf.float32)
+#                 logdet = tf.cast(logdet, dtype=tf.float32)
+#                 log_p = tf.cast(log_p, dtype=tf.float32)
                 return log_p, logdet
 
             

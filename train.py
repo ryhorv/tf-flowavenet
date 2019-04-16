@@ -1,6 +1,6 @@
 import os
-# os.environ["KMP_BLOCKTIME"] = "0"
-# os.environ["KMP_AFFINITY"] = "granularity=fine,verbose,compact,1,0"
+os.environ["KMP_BLOCKTIME"] = "0"
+os.environ["KMP_AFFINITY"] = "granularity=fine,verbose,compact,1,0"
 
 import tensorflow as tf
 import time
@@ -10,15 +10,66 @@ from hparams import hparams
 import argparse
 import numpy as np
 from utils import fp16_dtype_getter, average_gradients
+
+def manual_stepping(global_step, boundaries, rates, warmup=False):
+    """Manually stepped learning rate schedule.
+    from https://github.com/tensorflow/models/blob/master/research/object_detection/utils/learning_schedules.py#L120
+    This function provides fine grained control over learning rates.  One must
+    specify a sequence of learning rates as well as a set of integer steps
+    at which the current learning rate must transition to the next.  For example,
+    if boundaries = [5, 10] and rates = [.1, .01, .001], then the learning
+    rate returned by this function is .1 for global_step=0,...,4, .01 for
+    global_step=5...9, and .001 for global_step=10 and onward.
+    Args:
+        global_step: int64 (scalar) tensor representing global step.
+        boundaries: a list of global steps at which to switch learning
+            rates.  This list is assumed to consist of increasing positive integers.
+        rates: a list of (float) learning rates corresponding to intervals between
+            the boundaries.  The length of this list must be exactly
+            len(boundaries) + 1.
+        warmup: Whether to linearly interpolate learning rate for steps in
+            [0, boundaries[0]].
+        Returns:
+            a (scalar) float tensor representing learning rate
+    Raises:
+        ValueError: if one of the following checks fails:
+            1. boundaries is a strictly increasing list of positive integers
+            2. len(rates) == len(boundaries) + 1
+            3. boundaries[0] != 0
+    """
+    if any([b < 0 for b in boundaries]) or any(
+        [not isinstance(b, int) for b in boundaries]):
+        raise ValueError('boundaries must be a list of positive integers')
+    if any([bnext <= b for bnext, b in zip(boundaries[1:], boundaries[:-1])]):
+        raise ValueError('Entries in boundaries must be strictly increasing.')
+    if any([not isinstance(r, float) for r in rates]):
+        raise ValueError('Learning rates must be floats')
+    if len(rates) != len(boundaries) + 1:
+        raise ValueError('Number of provided learning rates must exceed '
+                     'number of boundary points by exactly 1.')
+
+    if boundaries and boundaries[0] == 0:
+        raise ValueError('First step cannot be zero.')
+
+    if warmup and boundaries:
+        slope = (rates[1] - rates[0]) * 1.0 / boundaries[0]
+        warmup_steps = list(range(boundaries[0]))
+        warmup_rates = [rates[0] + slope * step for step in warmup_steps]
+        boundaries = warmup_steps + boundaries
+        rates = warmup_rates + rates[1:]
+    else:
+        boundaries = [0] + boundaries
+    num_boundaries = len(boundaries)
+    rate_index = tf.reduce_max(tf.where(tf.greater_equal(global_step, boundaries),
+                                      list(range(num_boundaries)),
+                                      [0] * num_boundaries))
+    return tf.reduce_sum(rates * tf.one_hot(rate_index, depth=num_boundaries),
+                       name='learning_rate')
   
     
 def get_optimizer(hparams, global_step):
     with tf.name_scope('optimizer'):
-        learning_rate = tf.constant(0.001)
-        learning_rate = tf.cond(tf.less(global_step, 200000), true_fn=lambda: learning_rate, false_fn=lambda: tf.constant(0.001 / 2))
-        learning_rate = tf.cond(tf.less(global_step, 400000), true_fn=lambda: learning_rate, false_fn=lambda: tf.constant(0.001 / 4))
-        learning_rate = tf.cond(tf.less(global_step, 600000), true_fn=lambda: learning_rate, false_fn=lambda: tf.constant(0.001 / 6))
-
+        learning_rate = manual_stepping(global_step, [2000, 20000, 40000, 60000], [1e-8, 6 * 1e-3, 6 * 1e-3 / 2, 6 * 1e-3 / 4, 6 * 1e-3 / 6], True)
         optimizer = tf.train.AdamOptimizer(learning_rate)
         
         return optimizer, learning_rate
@@ -63,7 +114,15 @@ def build_model(dataset, hparams, global_step, init):
                         variables = tf.trainable_variables()
                         scaled_loss = tf.scalar_mul(hparams.scale, loss)
                         grads = tf.gradients(scaled_loss, variables)
-                        grad_vars = list(zip(grads, variables)) 
+                        
+                        _grads = []
+                        for g in grads:
+                            if g is not None:
+                                _grads.append(tf.cast(g, dtype=hparams.dtype))
+                            else:
+                                _grads.append(g)
+#                         grads = [tf.cast(g, dtype=hparams.dtype) for g in grads]
+                        grad_vars = list(zip(_grads, variables)) 
                         tower_gradvars.append(grad_vars)
                    
                     if i == 0:
@@ -74,7 +133,7 @@ def build_model(dataset, hparams, global_step, init):
     
     with tf.device(consolidation_device):
         grad_vars = average_gradients(tower_gradvars)
-        grad_vars = [(tf.scalar_mul(1./hparams.scale, g), v) for g, v in grad_vars if g is not None]
+        grad_vars = [(tf.scalar_mul(1./hparams.scale, tf.cast(g, dtype=tf.float32)), v) for g, v in grad_vars if g is not None]
         clipped_grad_vars, grad_global_norm = clip_gradients(grad_vars)
         optimizer, lr = get_optimizer(hparams, global_step)    
         with tf.control_dependencies(update_ops):
@@ -194,8 +253,8 @@ def train(log_dir, args, hparams, input_path):
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
-    # config.intra_op_parallelism_threads = 14
-    # config.inter_op_parallelism_threads = 4
+    config.intra_op_parallelism_threads = 14
+    config.inter_op_parallelism_threads = 4
 
     #Train
     with tf.Session(config=config) as sess:

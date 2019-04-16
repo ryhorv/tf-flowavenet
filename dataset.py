@@ -20,22 +20,29 @@ class Dataset:
 
         with tf.device('/cpu:0'):
             self._filenames = tf.placeholder(tf.string, shape=[None])
+            self._num_workers = tf.placeholder(tf.int64, shape=None, name='num_workers')
+            self._worker_id = tf.placeholder(tf.int64, shape=None, name='worker_id')
+            
             dataset = tf.data.TFRecordDataset(self._filenames)
+            dataset = dataset.shard(self._num_workers, self._worker_id)
             dataset = dataset.apply(tf.data.experimental.shuffle_and_repeat(buffer_size))
             dataset = dataset.map(self._load_sample, n_cpu)
             # dataset = dataset.apply(tf.data.experimental.ignore_errors())
             dataset = dataset.batch(self._hparams.batch_size)
-            dataset = dataset.prefetch(self._hparams.num_gpus)
+            dataset = dataset.prefetch(1)
 
-        self._train_iterator = dataset.make_initializable_iterator()
+        self._train_iterators = []
         self.inputs = []
         self.local_conditions = []
         self.speaker_ids = []
         for _ in range(hparams.num_gpus):
-            train_batch = self._train_iterator.get_next()
-            self.local_conditions.append(train_batch[0])
-            self.inputs.append(train_batch[1])
-            self.speaker_ids.append(train_batch[2])
+            train_iterator = dataset.make_initializable_iterator()
+            with tf.device(None):
+                train_batch = train_iterator.get_next()
+                self.local_conditions.append(train_batch[0])
+                self.inputs.append(train_batch[1])
+                self.speaker_ids.append(train_batch[2])
+                self._train_iterators.append(train_iterator)
                 
         self._test_iterator = dataset.make_initializable_iterator()
         test_batch = self._test_iterator.get_next()
@@ -91,10 +98,15 @@ class Dataset:
         
     def initialize(self, sess):
         # audio_filename, mel_filename, time_steps, N, speaker_id, text
-        sess.run(self._train_iterator.initializer, feed_dict={
-            self._filenames: [self._train_tfrecord]
-        })
+        for i, train_iterator in enumerate(self._train_iterators):
+            sess.run(train_iterator.initializer, feed_dict={
+                self._filenames: [self._train_tfrecord],
+                self._num_workers: self._hparams.num_gpus,
+                self._worker_id: i
+            })
 
         sess.run(self._test_iterator.initializer, feed_dict={
-            self._filenames: [self._test_tfrecord]
+            self._filenames: [self._test_tfrecord],
+            self._num_workers: 1,
+            self._worker_id: 0
         })
