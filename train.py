@@ -1,6 +1,6 @@
 import os
-# os.environ["KMP_BLOCKTIME"] = "0"
-# os.environ["KMP_AFFINITY"] = "granularity=fine,verbose,compact,1,0"
+os.environ["KMP_BLOCKTIME"] = "0"
+os.environ["KMP_AFFINITY"] = "granularity=fine,verbose,compact,1,0"
 
 import tensorflow as tf
 import time
@@ -131,7 +131,7 @@ def predict_random_samples(model, metadata_path, hparams):
     lc = tf.convert_to_tensor(lc[np.newaxis, ...], dtype=tf.float32)
         
     z = tf.random_normal(target_wavs.shape) * hparams.temp
-    speaker_ids = tf.constant(int(sample[3]), dtype=tf.int32)
+    speaker_ids = tf.constant([int(sample[3])], dtype=tf.int32)
         
     predicted_wavs = model.reverse(z, lc, speaker_ids)
     predicted_wavs = tf.squeeze(predicted_wavs, axis=-1)

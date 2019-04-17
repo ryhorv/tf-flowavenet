@@ -31,7 +31,7 @@ class TFRecordCreator:
         }
 
         if speaker_id is not None:
-            feature_key_value_pair['speaker_id'] = speaker_id_list
+            feature_key_value_pair['speaker_id'] = tf.train.Feature(int64_list=speaker_id_list)
 
         features = tf.train.Features(feature=feature_key_value_pair)
         example = tf.train.Example(features=features)
