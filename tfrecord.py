@@ -40,7 +40,10 @@ class TFRecordCreator:
 
     def _adjust_time_resolution(self, audio, mel, speaker_id=None):
         if audio.shape[0] < self._hparams.max_time_steps:
-            audio_pad = self._hparams.max_time_steps - audio.shape[0]
+            _max_time_frames = self._hparams.max_time_steps // self._hparams.hop_size
+            _max_time_steps = _max_time_frames * self._hparams.hop_size
+            
+            audio_pad = _max_time_steps- audio.shape[0]
             mel_pad = audio_pad // self._hparams.hop_size
             audio = np.pad(audio, (0, audio_pad), mode='constant', constant_values=self._pad)
             mel = np.pad(mel, ((0, mel_pad), (0, 0)), mode='constant', constant_values=self._pad)
@@ -57,7 +60,7 @@ class TFRecordCreator:
         mel = np.load(os.path.join(self._basedir, 'mels', mel_filename))
         audio = np.load(os.path.join(self._basedir, 'audios', audio_filename))
         speaker_id = np.int32(speaker_id)
-
+        audio, mel, speaker_id = self._adjust_time_resolution(audio, mel, speaker_id)
         return audio, mel, speaker_id
     
 

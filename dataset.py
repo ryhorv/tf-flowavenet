@@ -27,7 +27,7 @@ class Dataset:
             dataset = dataset.shard(self._num_workers, self._worker_id)
             dataset = dataset.apply(tf.data.experimental.shuffle_and_repeat(buffer_size))
             dataset = dataset.map(self._load_sample, n_cpu)
-            # dataset = dataset.apply(tf.data.experimental.ignore_errors())
+#             dataset = dataset.apply(tf.data.experimental.ignore_errors())
             dataset = dataset.batch(self._hparams.batch_size)
             dataset = dataset.prefetch(1)
 
@@ -76,8 +76,8 @@ class Dataset:
         mel = tf.reshape(mel, [mel_shape[0], mel_shape[1]])
         speaker_id = tf.cast(sample['speaker_id'], tf.int32) if self._hparams.gin_channels > 0 else 0
 
-        
-        start = tf.random.uniform([1], 0, tf.shape(mel)[0] - self._max_time_frames, dtype=tf.int32)
+        diff = tf.shape(mel)[0] - self._max_time_frames
+        start = tf.cond(diff > 0, true_fn=lambda: tf.random.uniform([1], 0, tf.shape(mel)[0] - self._max_time_frames, dtype=tf.int32), false_fn=lambda: np.array([0], dtype=np.int32))
         time_start = start[0] * self._hparams.hop_size
         audio = audio[time_start:time_start + self._max_time_steps]
         mel = mel[start[0]:start[0] + self._max_time_frames]

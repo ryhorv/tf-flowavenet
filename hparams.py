@@ -4,10 +4,10 @@ import numpy as np
 
 # Default hyperparameters
 hparams = tf.contrib.training.HParams(
-    num_gpus = 4, #Determines the number of gpus in use
+    num_gpus = 1, #Determines the number of gpus in use
     ps_device_type = 'GPU', # 'CPU'/'GPU'  Where gradients will sync
     dtype=tf.float16,
-    scale=32.,
+    scale=64.,
 #     scale = 1.,
 
     #Audio
@@ -26,7 +26,7 @@ hparams = tf.contrib.training.HParams(
     fmax = 7600,
     
 #     max_time_steps = 6400,
-    max_time_steps = 5120,
+    max_time_steps = 15872,
     
     eval_max_time_steps = 22050 * 4,
     eval_samples = 1,
@@ -34,7 +34,7 @@ hparams = tf.contrib.training.HParams(
     split_random_state = 123,
     shuffle_random_seed = 42,
     test_size = 10,
-    batch_size = 16,
+    batch_size = 8,
 
     gin_channels = -1,
     n_speakers = 7,

@@ -1,6 +1,6 @@
 import os
-os.environ["KMP_BLOCKTIME"] = "0"
-os.environ["KMP_AFFINITY"] = "granularity=fine,verbose,compact,1,0"
+# os.environ["KMP_BLOCKTIME"] = "0"
+# os.environ["KMP_AFFINITY"] = "granularity=fine,verbose,compact,1,0"
 
 import tensorflow as tf
 import time
@@ -69,7 +69,7 @@ def manual_stepping(global_step, boundaries, rates, warmup=False):
     
 def get_optimizer(hparams, global_step):
     with tf.name_scope('optimizer'):
-        learning_rate = manual_stepping(global_step, [2000, 20000, 40000, 60000], [1e-8, 6 * 1e-3, 6 * 1e-3 / 2, 6 * 1e-3 / 4, 6 * 1e-3 / 6], True)
+        learning_rate = manual_stepping(global_step, [2000, 200000, 400000, 600000], [1e-8, 1e-3, 1e-3 / 2,  1e-3 / 4, 1e-3 / 6], True)
         optimizer = tf.train.AdamOptimizer(learning_rate)
         
         return optimizer, learning_rate
@@ -253,8 +253,8 @@ def train(log_dir, args, hparams, input_path):
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
-    config.intra_op_parallelism_threads = 14
-    config.inter_op_parallelism_threads = 4
+#     config.intra_op_parallelism_threads = 14
+#     config.inter_op_parallelism_threads = 4
 
     #Train
     with tf.Session(config=config) as sess:
